@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Simulation Contract",
+  "type": "object",
+  "required": [
+    "task",
+    "medium",
+    "waveform",
+    "numerics",
+    "acceptance",
+    "evidence"
+  ],
+  "properties": {
+    "project": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "task": {
+      "type": "object",
+      "required": ["objective", "claim_scope"],
+      "properties": {
+        "objective": { "type": "string", "minLength": 1 },
+        "claim_scope": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": true
+    },
+    "medium": {
+      "type": "object",
+      "required": ["model_type", "parameter_source"],
+      "properties": {
+        "model_type": { "type": "string", "minLength": 1 },
+        "parameter_source": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": true
+    },
+    "waveform": {
+      "type": "object",
+      "required": ["excitation_mode", "measurement_mode"],
+      "properties": {
+        "excitation_mode": { "type": "string", "minLength": 1 },
+        "measurement_mode": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": true
+    },
+    "numerics": {
+      "type": "object",
+      "required": ["precision_requirement"],
+      "properties": {
+        "precision_requirement": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": true
+    },
+    "acceptance": {
+      "type": "object",
+      "required": ["negative_controls", "sensitivity_tests"],
+      "properties": {
+        "negative_controls": { "type": "array" },
+        "sensitivity_tests": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["required_outputs", "provenance_level"],
+      "properties": {
+        "required_outputs": { "type": "array" },
+        "provenance_level": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
