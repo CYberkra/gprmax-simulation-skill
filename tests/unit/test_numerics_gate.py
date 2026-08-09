@@ -90,6 +90,60 @@ def test_grid_blocks_undersampled_precision_feature(tmp_path: Path):
     assert result.code == "BLOCK_GEOMETRY_UNDERSAMPLED"
 
 
+def test_grid_blocks_when_critical_feature_lacks_discretized_truth(tmp_path: Path):
+    """Catches inferred Python rounding being accepted as validated geometry truth."""
+    contract = {
+        "numerics": {
+            "f_max_hz": 200e6,
+            "epsilon_r_max": 4.0,
+            "grid": {
+                "spacing_m": [0.02, 0.02, 0.02],
+                "cells_per_wavelength_required": 8.0,
+            },
+        },
+        "geometry": {
+            "critical_features": [
+                {"id": "thin_target", "name": "thin target", "size_m": 0.1, "minimum_cells": 2}
+            ]
+        },
+    }
+
+    result = audit_grid(GateContext(tmp_path, contract))
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_GEOMETRY_DISCRETIZATION_EVIDENCE"
+
+
+def test_grid_accepts_cells_from_validated_geometry_artifact(tmp_path: Path):
+    """Catches rejection of exact discretization evidence published by geometry validation."""
+    contract = {
+        "numerics": {
+            "f_max_hz": 200e6,
+            "epsilon_r_max": 4.0,
+            "grid": {
+                "spacing_m": [0.02, 0.02, 0.02],
+                "cells_per_wavelength_required": 8.0,
+            },
+        },
+        "geometry": {
+            "critical_features": [
+                {"id": "thin_target", "name": "thin target", "minimum_cells": 2}
+            ]
+        },
+    }
+    artifacts = {
+        "geometry": {
+            "validated": True,
+            "critical_features": {"thin_target": {"discretized_cells": 5}},
+        }
+    }
+
+    result = audit_grid(GateContext(tmp_path, contract, artifacts=artifacts))
+
+    assert result.state is GateState.PASS
+    assert result.code == "PASS_GRID_RESOLVED"
+
+
 def test_grid_does_not_invent_a_universal_wavelength_requirement(tmp_path: Path):
     """Catches silently hard-coding lambda/10 when the contract declares no threshold."""
     contract = {
@@ -143,7 +197,7 @@ def test_time_window_blocks_target_back_interface_truncation(tmp_path: Path):
 
     assert result.state is GateState.BLOCK
     assert result.code == "BLOCK_TIME_WINDOW_TRUNCATION_RISK"
-    assert ctx.artifacts["time_window"]["required_time_window_s"] == 70e-9
+    assert ctx.artifacts["derived"]["time_window"]["required_time_window_s"] == 70e-9
 
 
 def test_pml_sensitivity_is_not_required_without_acceptance_declaration(tmp_path: Path):
@@ -177,6 +231,39 @@ def test_domain_sensitivity_name_explicitly_requires_pml_evidence(tmp_path: Path
     contract = {
         "numerics": {"pml": {"clearance_m": 0.3, "minimum_clearance_m": 0.2}},
         "acceptance": {"sensitivity_tests": [{"name": "domain boundary"}]},
+    }
+
+    result = audit_pml(GateContext(tmp_path, contract))
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_PML_SENSITIVITY_REQUIRED"
+
+
+@pytest.mark.parametrize("identifier", ["frequency_domain_response", "subdomain_decomposition"])
+def test_unrelated_sensitivity_near_match_does_not_require_pml_evidence(
+    tmp_path: Path, identifier: str
+):
+    """Catches substring matching that turns unrelated sensitivity IDs into PML requirements."""
+    contract = {
+        "numerics": {"pml": {"clearance_m": 0.3, "minimum_clearance_m": 0.2}},
+        "acceptance": {"sensitivity_tests": [identifier]},
+    }
+
+    result = audit_pml(GateContext(tmp_path, contract))
+
+    assert result.state is GateState.PASS
+    assert result.code == "PASS_PML_CLEARANCE"
+
+
+@pytest.mark.parametrize(
+    "requirement",
+    ["pml", "PML sensitivity", {"gate_id": "pml", "required": True}],
+)
+def test_exact_normalized_pml_identifiers_require_evidence(tmp_path: Path, requirement):
+    """Catches loss of explicit PML requirements while avoiding fuzzy substring matching."""
+    contract = {
+        "numerics": {"pml": {"clearance_m": 0.3, "minimum_clearance_m": 0.2}},
+        "acceptance": {"sensitivity_tests": [requirement]},
     }
 
     result = audit_pml(GateContext(tmp_path, contract))
@@ -231,7 +318,7 @@ def test_analytic_sanity_uses_only_declared_assumptions_and_writes_f0(tmp_path: 
             "classification": "contract_assumption_not_solver_truth",
         },
     }
-    assert ctx.artifacts["analytic_sanity"] == report
+    assert ctx.artifacts["derived"]["analytic_sanity"] == report
     assert json.loads((tmp_path / "artifacts" / "analytic_sanity.json").read_text(encoding="utf-8")) == report
 
 
@@ -291,3 +378,121 @@ def test_analytic_sanity_uses_observed_dt_for_compute_estimate(tmp_path: Path):
     assert report["time_step_s"] == 2e-11
     assert report["estimated_time_steps"] == 1000
     assert report["compute_estimate"]["estimated_operations"] == 200_000
+
+
+def test_analytic_sanity_publishes_derived_state_only_after_persisting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Catches in-memory publication of an F0 report before durable persistence succeeds."""
+    from scripts.core import write_json as real_write_json
+
+    contract = {
+        "waveform": {"source_delay_s": 0.0, "source_tail_s": 0.0},
+        "numerics": {
+            "f_max_hz": 100e6,
+            "epsilon_r_max": 4.0,
+            "domain_m": [1.0, 1.0, 0.01],
+            "grid": {"spacing_m": [0.1, 0.1, 0.01]},
+            "dt_s": 1e-11,
+            "time": {
+                "longest_path_m": 1.5,
+                "velocity_mps": 150_000_000.0,
+                "response_duration_s": 0.0,
+                "guard_s": 0.0,
+            },
+            "compute_assumptions": {
+                "bytes_per_cell": 8,
+                "operations_per_cell_update": 2,
+            },
+        },
+    }
+    ctx = GateContext(tmp_path, contract, artifacts={"analytic_sanity": {"solver": "evidence"}})
+    published_during_write = []
+
+    def observe_write(path, value):
+        published_during_write.append("derived" in ctx.artifacts)
+        real_write_json(path, value)
+
+    monkeypatch.setattr("scripts.audit_numerics.write_json", observe_write)
+
+    report = build_analytic_sanity(ctx)
+
+    assert published_during_write == [False]
+    assert ctx.artifacts["analytic_sanity"] == {"solver": "evidence"}
+    assert ctx.artifacts["derived"]["analytic_sanity"] == report
+
+
+def test_analytic_sanity_does_not_publish_when_persistence_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Catches failed artifact writes leaving a derived report available in memory."""
+    contract = {
+        "waveform": {"source_delay_s": 0.0, "source_tail_s": 0.0},
+        "numerics": {
+            "f_max_hz": 100e6,
+            "epsilon_r_max": 4.0,
+            "domain_m": [1.0, 1.0, 0.01],
+            "grid": {"spacing_m": [0.1, 0.1, 0.01]},
+            "dt_s": 1e-11,
+            "time": {
+                "longest_path_m": 1.5,
+                "velocity_mps": 150_000_000.0,
+                "response_duration_s": 0.0,
+                "guard_s": 0.0,
+            },
+            "compute_assumptions": {
+                "bytes_per_cell": 8,
+                "operations_per_cell_update": 2,
+            },
+        },
+    }
+    ctx = GateContext(tmp_path, contract, artifacts={"keep": "input evidence"})
+
+    def fail_write(_path, _value):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("scripts.audit_numerics.write_json", fail_write)
+
+    with pytest.raises(OSError, match="disk full"):
+        build_analytic_sanity(ctx)
+
+    assert ctx.artifacts == {"keep": "input evidence"}
+
+
+@pytest.mark.parametrize("gate", [audit_grid, audit_cfl, audit_time_window, audit_pml])
+def test_gate_derived_outputs_preserve_preexisting_input_artifacts(tmp_path: Path, gate):
+    """Catches numerical gates overwriting top-level solver or validation evidence."""
+    contract = {
+        "waveform": {"source_delay_s": 0.0, "source_tail_s": 0.0},
+        "numerics": {
+            "f_max_hz": 100e6,
+            "epsilon_r_max": 4.0,
+            "grid": {
+                "spacing_m": [0.1, 0.1, 0.01],
+                "cells_per_wavelength_required": 2.0,
+            },
+            "dt_s": 1e-11,
+            "time": {
+                "longest_path_m": 1.5,
+                "velocity_mps": 150_000_000.0,
+                "response_duration_s": 0.0,
+                "guard_s": 0.0,
+                "simulation_time_s": 30e-9,
+            },
+            "pml": {"clearance_m": 0.3, "minimum_clearance_m": 0.2},
+        },
+        "acceptance": {"sensitivity_tests": []},
+    }
+    sentinels = {
+        "grid": {"solver": "grid evidence"},
+        "cfl": {"solver": "cfl evidence"},
+        "time_window": {"solver": "time evidence"},
+        "pml": {"solver": "pml evidence"},
+    }
+    ctx = GateContext(tmp_path, contract, artifacts=dict(sentinels))
+
+    gate(ctx)
+
+    for key, expected in sentinels.items():
+        assert ctx.artifacts[key] == expected
+    assert gate.__name__.removeprefix("audit_") in ctx.artifacts["derived"]

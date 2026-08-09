@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -109,8 +110,9 @@ def build_analytic_sanity(ctx: GateContext) -> dict[str, Any]:
             requirement, "numerics.grid.cells_per_wavelength_required"
         )
 
-    ctx.artifacts["analytic_sanity"] = report
+    _validate_derived_namespace(ctx)
     write_json(ctx.project_root / _ANALYTIC_ARTIFACT, report)
+    _publish_derived(ctx, "analytic_sanity", report)
     return report
 
 
@@ -124,22 +126,29 @@ def audit_grid(ctx: GateContext) -> GateResult:
             _required_value(numerics, "f_max_hz", "numerics"),
             _required_value(numerics, "epsilon_r_max", "numerics"),
         )
-        feature_failure = _undersampled_feature(ctx.contract, spacing)
+        feature_failure = _critical_feature_failure(ctx)
         requirement = _wavelength_requirement(grid_spec, ctx.artifacts)
     except (KeyError, TypeError, ValueError) as error:
         return _invalid_gate("grid", error)
 
-    ctx.artifacts["grid"] = {
+    grid_report: dict[str, Any] = {
         "minimum_wavelength_m": wavelength,
         "spacing_m": list(spacing),
         "cells_per_wavelength": wavelength / max(spacing),
     }
+    if requirement is not None:
+        grid_report["cells_per_wavelength_required"] = requirement
+    try:
+        _publish_derived(ctx, "grid", grid_report)
+    except ValueError as error:
+        return _invalid_gate("grid", error)
     if feature_failure is not None:
+        code, summary = feature_failure
         return GateResult(
             "grid",
             GateState.BLOCK,
-            "BLOCK_GEOMETRY_UNDERSAMPLED",
-            feature_failure,
+            code,
+            summary,
             invalidates=("cfl", "time_window", "pml", "geometry"),
         )
     if requirement is None:
@@ -152,7 +161,6 @@ def audit_grid(ctx: GateContext) -> GateResult:
         )
 
     actual = wavelength / max(spacing)
-    ctx.artifacts["grid"]["cells_per_wavelength_required"] = requirement
     if actual < requirement:
         return GateResult(
             "grid",
@@ -180,7 +188,14 @@ def audit_cfl(ctx: GateContext) -> GateResult:
     except (KeyError, TypeError, ValueError) as error:
         return _invalid_gate("cfl", error)
 
-    ctx.artifacts["cfl"] = {"courant_limit_s": limit, "dt_s": dt_s, "dt_source": source}
+    try:
+        _publish_derived(
+            ctx,
+            "cfl",
+            {"courant_limit_s": limit, "dt_s": dt_s, "dt_source": source},
+        )
+    except ValueError as error:
+        return _invalid_gate("cfl", error)
     if dt_s > limit:
         return GateResult(
             "cfl",
@@ -218,7 +233,7 @@ def audit_time_window(ctx: GateContext) -> GateResult:
     except (KeyError, TypeError, ValueError) as error:
         return _invalid_gate("time_window", error)
 
-    ctx.artifacts["time_window"] = {
+    time_report = {
         "source_delay_s": source_delay_s,
         "source_tail_s": source_tail_s,
         "maximum_round_trip_time_s": round_trip_s,
@@ -227,6 +242,10 @@ def audit_time_window(ctx: GateContext) -> GateResult:
         "required_time_window_s": required_s,
         "simulation_time_s": simulation_s,
     }
+    try:
+        _publish_derived(ctx, "time_window", time_report)
+    except ValueError as error:
+        return _invalid_gate("time_window", error)
     if simulation_s < required_s:
         return GateResult(
             "time_window",
@@ -263,11 +282,15 @@ def audit_pml(ctx: GateContext) -> GateResult:
     except (KeyError, TypeError, ValueError) as error:
         return _invalid_gate("pml", error)
 
-    ctx.artifacts["pml"] = {
+    pml_report = {
         "minimum_observed_clearance_m": clearance,
         "minimum_clearance_required_m": minimum,
     }
     if clearance < minimum:
+        try:
+            _publish_derived(ctx, "pml", pml_report)
+        except ValueError as error:
+            return _invalid_gate("pml", error)
         return GateResult(
             "pml",
             GateState.BLOCK,
@@ -281,8 +304,12 @@ def audit_pml(ctx: GateContext) -> GateResult:
     if evidence is None:
         evidence = ctx.artifacts.get("pml_sensitivity")
     evidence_passes = _evidence_passes(evidence)
-    ctx.artifacts["pml"]["sensitivity_required"] = sensitivity_required
-    ctx.artifacts["pml"]["sensitivity_evidence_passes"] = evidence_passes
+    pml_report["sensitivity_required"] = sensitivity_required
+    pml_report["sensitivity_evidence_passes"] = evidence_passes
+    try:
+        _publish_derived(ctx, "pml", pml_report)
+    except ValueError as error:
+        return _invalid_gate("pml", error)
     if sensitivity_required and not evidence_passes:
         return GateResult(
             "pml",
@@ -414,7 +441,8 @@ def _wavelength_requirement(
 ) -> float | None:
     requirement = grid_spec.get("cells_per_wavelength_required")
     if requirement is None:
-        analytic = artifacts.get("analytic_sanity")
+        derived = artifacts.get("derived")
+        analytic = derived.get("analytic_sanity") if isinstance(derived, Mapping) else None
         if isinstance(analytic, Mapping):
             requirement = analytic.get("cells_per_wavelength_required")
             if requirement is None and isinstance(analytic.get("grid"), Mapping):
@@ -424,10 +452,8 @@ def _wavelength_requirement(
     return _positive_finite(requirement, "cells_per_wavelength_required")
 
 
-def _undersampled_feature(
-    contract: Mapping[str, Any], spacing: tuple[float, float, float]
-) -> str | None:
-    geometry = contract.get("geometry", {})
+def _critical_feature_failure(ctx: GateContext) -> tuple[str, str] | None:
+    geometry = ctx.contract.get("geometry", {})
     if not isinstance(geometry, Mapping):
         raise ValueError("geometry must be a mapping")
     features = geometry.get("critical_features", [])
@@ -440,25 +466,57 @@ def _undersampled_feature(
         if required is None:
             raise ValueError(f"geometry.critical_features[{index}].minimum_cells is required")
         required_cells = _positive_integer(required, f"critical_features[{index}].minimum_cells")
-        observed = feature.get("discretized_cells", feature.get("actual_cells"))
+        observed = feature.get("discretized_cells")
         if observed is None:
-            size = _positive_finite(
-                _required_value(feature, "size_m", f"geometry.critical_features[{index}]"),
-                f"critical_features[{index}].size_m",
+            observed = _validated_geometry_cells(ctx.artifacts, feature)
+        if observed is None:
+            name = str(feature.get("name", feature.get("id", f"critical feature {index}")))
+            return (
+                "BLOCK_GEOMETRY_DISCRETIZATION_EVIDENCE",
+                f"{name} lacks exact discretized_cells or validated geometry evidence",
             )
-            axis = feature.get("axis")
-            if axis in ("x", "y", "z"):
-                step = spacing[("x", "y", "z").index(axis)]
-            elif axis is None:
-                step = max(spacing)
-            else:
-                raise ValueError(f"critical_features[{index}].axis must be x, y, or z")
-            observed_cells = max(1, int(round(size / step)))
         else:
             observed_cells = _positive_integer(observed, f"critical_features[{index}].discretized_cells")
         if observed_cells < required_cells:
             name = str(feature.get("name", f"critical feature {index}"))
-            return f"{name} uses {observed_cells} cells; declared minimum is {required_cells}"
+            return (
+                "BLOCK_GEOMETRY_UNDERSAMPLED",
+                f"{name} uses {observed_cells} cells; declared minimum is {required_cells}",
+            )
+    return None
+
+
+def _validated_geometry_cells(
+    artifacts: Mapping[str, Any], feature: Mapping[str, Any]
+) -> object | None:
+    geometry = artifacts.get("geometry")
+    if not isinstance(geometry, Mapping):
+        return None
+    validated = geometry.get("validated") is True or str(geometry.get("state", "")).upper() == "PASS"
+    if not validated:
+        return None
+    records = geometry.get("critical_features")
+    identities = tuple(
+        str(feature[key]).strip()
+        for key in ("id", "name")
+        if key in feature and str(feature[key]).strip()
+    )
+    if isinstance(records, Mapping):
+        for identity in identities:
+            record = records.get(identity)
+            if isinstance(record, Mapping) and "discretized_cells" in record:
+                return record["discretized_cells"]
+    elif isinstance(records, Sequence) and not isinstance(records, (str, bytes)):
+        for record in records:
+            if not isinstance(record, Mapping):
+                continue
+            record_identities = {
+                str(record[key]).strip()
+                for key in ("id", "name")
+                if key in record and str(record[key]).strip()
+            }
+            if record_identities.intersection(identities) and "discretized_cells" in record:
+                return record["discretized_cells"]
     return None
 
 
@@ -476,13 +534,13 @@ def _minimum_declared_clearance(value: object) -> float:
 
 def _is_pml_sensitivity(value: object) -> bool:
     if isinstance(value, str):
-        return _names_domain_or_pml_sensitivity(value)
+        return _normalize_identifier(value) in _PML_SENSITIVITY_IDS
     if isinstance(value, Mapping):
         if value.get("required") is False:
             return False
         return any(
-            _names_domain_or_pml_sensitivity(str(value.get(key, "")))
-            for key in ("id", "name", "kind", "gate", "type")
+            _normalize_identifier(str(value.get(key, ""))) in _PML_SENSITIVITY_IDS
+            for key in ("id", "name", "kind", "gate", "gate_id", "type")
         )
     return False
 
@@ -499,9 +557,34 @@ def _evidence_passes(value: object) -> bool:
     return False
 
 
-def _names_domain_or_pml_sensitivity(value: str) -> bool:
-    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
-    return any(term in normalized for term in ("pml", "domain", "boundary"))
+_PML_SENSITIVITY_IDS = frozenset(
+    {
+        "pml",
+        "pml_sensitivity",
+        "pml_domain",
+        "pml_domain_sensitivity",
+        "domain_boundary",
+        "domain_boundary_sensitivity",
+        "domain_sensitivity",
+        "boundary_sensitivity",
+    }
+)
+
+
+def _normalize_identifier(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
+
+
+def _validate_derived_namespace(ctx: GateContext) -> None:
+    derived = ctx.artifacts.get("derived")
+    if derived is not None and not isinstance(derived, dict):
+        raise ValueError("artifacts.derived must be a mutable mapping")
+
+
+def _publish_derived(ctx: GateContext, key: str, value: Mapping[str, Any]) -> None:
+    _validate_derived_namespace(ctx)
+    derived = ctx.artifacts.setdefault("derived", {})
+    derived[key] = dict(value)
 
 
 def _covering_count(total: float, step: float) -> int:
