@@ -300,7 +300,16 @@ def test_every_supported_precision_risk_flag_is_accepted(tmp_path: Path, flag: s
     assert result.code == "PASS_PRECISION"
 
 
-@pytest.mark.parametrize("flag", ["weak-differential", "unknown_precision_risk", 7])
+@pytest.mark.parametrize(
+    "flag",
+    [
+        "weak-differential",
+        "unknown_precision_risk",
+        "WEAK_DIFFERENTIAL",
+        " weak_differential ",
+        7,
+    ],
+)
 def test_unknown_or_non_string_precision_risk_flag_blocks_contract(
     tmp_path: Path, flag: object
 ):

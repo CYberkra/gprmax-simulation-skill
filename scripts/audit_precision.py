@@ -212,13 +212,12 @@ def _risk_flags(contract: Mapping[str, Any], numerics: Mapping[str, Any]) -> tup
                 raise _PrecisionAuditError(
                     "BLOCK_PRECISION_CONTRACT", "risk_flags must contain non-empty strings"
                 )
-            normalized = item.strip().lower()
-            if normalized not in _PRECISION_RISK_FLAGS:
+            if item not in _PRECISION_RISK_FLAGS:
                 raise _PrecisionAuditError(
                     "BLOCK_PRECISION_CONTRACT",
-                    f"unsupported precision risk flag {normalized!r}",
+                    f"unsupported precision risk flag {item!r}",
                 )
-            flags.add(normalized)
+            flags.add(item)
     return tuple(sorted(flags))
 
 
