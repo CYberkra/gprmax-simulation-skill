@@ -37,12 +37,12 @@
         "complex_dtype"
       ],
       "properties": {
-        "gprmax_version": {"type": "string", "minLength": 1},
-        "banner": {"type": "string", "minLength": 1},
-        "import_path": {"type": "string", "minLength": 1},
-        "backend": {"type": "string", "minLength": 1},
-        "real_dtype": {"type": "string", "minLength": 1},
-        "complex_dtype": {"type": "string", "minLength": 1},
+        "gprmax_version": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "banner": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "import_path": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "backend": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "real_dtype": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "complex_dtype": {"type": "string", "minLength": 1, "pattern": "\\S"},
         "python_version": {"type": "string", "minLength": 1},
         "cuda_version": {"type": "string", "minLength": 1},
         "gpu": {"type": "string", "minLength": 1},

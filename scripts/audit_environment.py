@@ -81,7 +81,7 @@ def _resolve_manifest_path(project_root: Path, manifest_ref: str) -> Path:
         resolved = path.resolve(strict=True)
         logs_root = (project_root / "logs").resolve(strict=False)
         resolved.relative_to(logs_root)
-    except (OSError, ValueError) as error:
+    except (OSError, RuntimeError, ValueError) as error:
         raise EnvironmentResolutionError("runtime.manifest must resolve under logs/") from error
     return resolved
 
