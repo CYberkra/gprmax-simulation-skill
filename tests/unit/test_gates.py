@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from scripts.core import GateContext, GateResult, GateState
-from scripts.gates import GateRegistry, run_stage, write_gate_report
+from scripts.gates import GateContractError, GateRegistry, run_stage, write_gate_report
 
 
 def test_block_stops_remaining_gates(tmp_path: Path):
@@ -63,13 +63,17 @@ def test_unsatisfied_dependency_marks_gate_stale_without_calling_it(tmp_path: Pa
 
 
 def test_duplicate_gate_id_is_rejected():
-    """Catches registration that permits ambiguous gate identifiers."""
+    """Catches ambiguous registration without a stable contract error."""
     registry = GateRegistry()
     gate = lambda ctx: GateResult("shared", GateState.PASS, "PASS", "ok")
     registry.register("preflight", "shared", gate)
 
-    with pytest.raises(ValueError, match="duplicate gate_id: shared"):
+    with pytest.raises(GateContractError) as exc:
         registry.register("postflight", "shared", gate)
+
+    assert exc.value.code == "BLOCK_GATE_DUPLICATE_ID"
+    assert exc.value.path == "gate_id"
+    assert exc.value.details == "duplicate gate_id: shared"
 
 
 def test_write_gate_report_preserves_serialized_gate_evidence(tmp_path: Path):
@@ -94,3 +98,89 @@ def test_write_gate_report_preserves_serialized_gate_evidence(tmp_path: Path):
             }
         ]
     }
+
+
+def test_callback_result_id_mismatch_is_a_stable_contract_error(tmp_path: Path):
+    """Catches a callback result recorded under an ID other than its registered gate."""
+    registry = GateRegistry()
+    registry.register(
+        "preflight",
+        "registered",
+        lambda ctx: GateResult("reported", GateState.PASS, "PASS", "wrong identity"),
+    )
+
+    with pytest.raises(GateContractError) as exc:
+        run_stage(registry, "preflight", GateContext(tmp_path, {}))
+
+    assert exc.value.code == "BLOCK_GATE_RESULT_ID"
+    assert exc.value.path == "registered.gate_id"
+    assert exc.value.details == "expected registered, got reported"
+
+
+def test_invalid_callback_return_type_is_a_stable_contract_error(tmp_path: Path):
+    """Catches callbacks that bypass the GateResult result contract."""
+    registry = GateRegistry()
+    registry.register("preflight", "registered", lambda ctx: "PASS")
+
+    with pytest.raises(GateContractError) as exc:
+        run_stage(registry, "preflight", GateContext(tmp_path, {}))
+
+    assert exc.value.code == "BLOCK_GATE_RESULT_TYPE"
+    assert exc.value.path == "registered"
+    assert exc.value.details == "expected GateResult, got str"
+
+
+def test_invalid_callback_state_is_a_stable_contract_error(tmp_path: Path):
+    """Catches callback results whose runtime state is outside GateState."""
+    registry = GateRegistry()
+    registry.register(
+        "preflight",
+        "registered",
+        lambda ctx: GateResult("registered", "INVALID", "BAD", "bad state"),
+    )
+
+    with pytest.raises(GateContractError) as exc:
+        run_stage(registry, "preflight", GateContext(tmp_path, {}))
+
+    assert exc.value.code == "BLOCK_GATE_RESULT_STATE"
+    assert exc.value.path == "registered.state"
+    assert exc.value.details == "expected GateState, got str"
+
+
+def test_invalid_report_does_not_create_destination(tmp_path: Path):
+    """Catches validation that writes a malformed report before rejecting it."""
+    output = tmp_path / "reports" / "gates.json"
+
+    with pytest.raises(GateContractError) as exc:
+        write_gate_report(output, [GateResult("source", GateState.PASS, "", "missing code")])
+
+    assert exc.value.code == "BLOCK_GATE_REPORT_SCHEMA"
+    assert exc.value.path == "results.0.code"
+    assert exc.value.details == "'' should be non-empty"
+    assert not output.exists()
+
+
+def test_invalid_report_does_not_overwrite_destination(tmp_path: Path):
+    """Catches report validation that replaces an existing report before rejection."""
+    output = tmp_path / "gates.json"
+    output.write_text("existing report\n", encoding="utf-8")
+
+    with pytest.raises(GateContractError):
+        write_gate_report(output, [GateResult("source", GateState.PASS, "", "missing code")])
+
+    assert output.read_text(encoding="utf-8") == "existing report\n"
+
+
+@pytest.mark.parametrize("field", ["evidence", "invalidates"])
+def test_malformed_report_collection_is_a_stable_contract_error(tmp_path: Path, field: str):
+    """Catches iterable fields that crash serialization before report validation."""
+    output = tmp_path / "gates.json"
+    result = GateResult("source", GateState.PASS, "PASS", "ok", **{field: None})
+
+    with pytest.raises(GateContractError) as exc:
+        write_gate_report(output, [result])
+
+    assert exc.value.code == "BLOCK_GATE_REPORT_FIELD_TYPE"
+    assert exc.value.path == f"results.0.{field}"
+    assert exc.value.details == "expected tuple[str, ...], got NoneType"
+    assert not output.exists()
