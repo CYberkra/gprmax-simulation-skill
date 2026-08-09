@@ -23,7 +23,7 @@ def _material(**overrides: Any) -> dict[str, Any]:
     return material
 
 
-def _contract(material: dict[str, Any], *, claim_scope: str = "physical") -> dict[str, Any]:
+def _contract(material: dict[str, Any], *, claim_scope: Any = "physical") -> dict[str, Any]:
     return {"task": {"claim_scope": claim_scope}, "materials": [material]}
 
 
@@ -130,6 +130,48 @@ def test_assumed_material_can_support_only_numerical_scope(tmp_path: Path):
 
     assert result.state is GateState.PASS
     assert result.code == "PASS_MATERIALS"
+
+
+@pytest.mark.parametrize("claim_scope", ["physcial", "exploratory", "", "   ", None, 7, []])
+def test_unknown_or_malformed_claim_scope_blocks_fail_closed(
+    tmp_path: Path, claim_scope: Any
+):
+    """Catches typoed or malformed scopes falling through as if they were numerical."""
+    result = audit_materials(
+        GateContext(
+            tmp_path,
+            _contract(_material(provenance="assumed"), claim_scope=claim_scope),
+        )
+    )
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_CLAIM_SCOPE"
+
+
+@pytest.mark.parametrize(
+    ("claim_scope", "expected_state", "expected_code"),
+    [
+        ("numerical", GateState.PASS, "PASS_MATERIALS"),
+        ("physical", GateState.PASS_WITH_LIMITATION, "LIMIT_MATERIAL_PROVENANCE"),
+        ("engineering", GateState.PASS_WITH_LIMITATION, "LIMIT_MATERIAL_PROVENANCE"),
+    ],
+)
+def test_supported_claim_scopes_keep_their_provenance_semantics(
+    tmp_path: Path,
+    claim_scope: str,
+    expected_state: GateState,
+    expected_code: str,
+):
+    """Catches a closed-vocabulary fix that changes established provenance decisions."""
+    result = audit_materials(
+        GateContext(
+            tmp_path,
+            _contract(_material(provenance="sensitivity_only"), claim_scope=claim_scope),
+        )
+    )
+
+    assert result.state is expected_state
+    assert result.code == expected_code
 
 
 @pytest.mark.parametrize("provenance", ["assumed", "sensitivity_only", "literature"])
@@ -249,4 +291,3 @@ def test_nested_provenance_and_mapping_band_are_supported(tmp_path: Path):
     result = audit_materials(GateContext(tmp_path, contract))
 
     assert result.state is GateState.PASS
-

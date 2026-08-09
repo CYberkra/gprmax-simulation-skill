@@ -17,6 +17,7 @@ _PROVENANCE_CLASSES = frozenset(
 )
 _LIMITED_PROVENANCE = frozenset({"assumed", "sensitivity_only"})
 _CLAIM_GRADE_SCOPES = frozenset({"physical", "engineering"})
+_SUPPORTED_CLAIM_SCOPES = frozenset({"numerical", "physical", "engineering"})
 
 
 class _MaterialAuditError(ValueError):
@@ -161,13 +162,18 @@ def _materials(contract: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
 def _claim_scope(contract: Mapping[str, Any]) -> str:
     task = contract.get("task")
     if not isinstance(task, Mapping):
-        raise _MaterialAuditError("BLOCK_MATERIAL_PARAMETERS", "task must be a mapping")
+        raise _MaterialAuditError("BLOCK_CLAIM_SCOPE", "task must be a mapping")
     value = task.get("claim_scope")
     if not isinstance(value, str) or not value.strip():
         raise _MaterialAuditError(
-            "BLOCK_MATERIAL_PARAMETERS", "task.claim_scope must be a non-empty string"
+            "BLOCK_CLAIM_SCOPE", "task.claim_scope must be a supported non-empty string"
         )
-    return value.strip().lower()
+    scope = value.strip().lower()
+    if scope not in _SUPPORTED_CLAIM_SCOPES:
+        raise _MaterialAuditError(
+            "BLOCK_CLAIM_SCOPE", f"task.claim_scope {scope!r} is not supported"
+        )
+    return scope
 
 
 def _material_name(material: Mapping[str, Any], index: int) -> str:
