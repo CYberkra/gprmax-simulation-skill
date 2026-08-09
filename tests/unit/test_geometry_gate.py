@@ -68,6 +68,38 @@ def test_geometry_blocks_2d_engineering_system_claim(tmp_path: Path):
     assert result.code == "BLOCK_DIMENSIONALITY_OVERCLAIM"
 
 
+def test_geometry_blocks_2d_engineering_detection_claim(tmp_path: Path):
+    """Catches engineering certification escaping the 2-D barrier via a benign objective."""
+    contract = _contract(task={"objective": "detection", "claim_scope": "engineering"})
+
+    result = audit_geometry(GateContext(tmp_path, contract))
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_DIMENSIONALITY_OVERCLAIM"
+
+
+@pytest.mark.parametrize("claim_scope", ["physcial", "", "   ", None, 7, []])
+def test_geometry_blocks_unknown_or_malformed_claim_scope(
+    tmp_path: Path, claim_scope: Any
+):
+    """Catches typoed or malformed scope values falling through as numerical use."""
+    contract = _contract(task={"objective": "detection", "claim_scope": claim_scope})
+
+    result = audit_geometry(GateContext(tmp_path, contract))
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_CLAIM_SCOPE"
+
+
+def test_geometry_allows_validated_2d_numerical_detection(tmp_path: Path):
+    """Catches the stricter claim barrier rejecting legitimate reduced-dimensional exploration."""
+    result = audit_geometry(
+        GateContext(tmp_path, _contract(), artifacts={"geometry": _validated_geometry()})
+    )
+
+    assert result.state is GateState.PASS
+
+
 @pytest.mark.parametrize("objective", ["finite_target", "antenna", "b_scan", "hardware", "system"])
 @pytest.mark.parametrize("claim_scope", ["physical", "engineering"])
 def test_geometry_blocks_2d_claim_grade_3d_objectives(
@@ -156,6 +188,97 @@ def test_geometry_uses_validated_effective_truth_and_preserves_input_evidence(tm
 
 
 @pytest.mark.parametrize(
+    "records",
+    [
+        {"target": {"id": "other", "discretized_cells": 16, "effective_m": 0.8}},
+        {"target": {"name": "other", "discretized_cells": 16, "effective_m": 0.8}},
+        [{"id": "other", "name": "target", "discretized_cells": 16, "effective_m": 0.8}],
+        [{"id": "target", "name": "other", "discretized_cells": 16, "effective_m": 0.8}],
+    ],
+)
+def test_geometry_rejects_conflicting_feature_evidence_identity(
+    tmp_path: Path, records: Any
+):
+    """Catches outer-key or loose-intersection matches hiding contradictory identities."""
+    observed = _validated_geometry()
+    observed["critical_features"] = records
+
+    result = audit_geometry(
+        GateContext(tmp_path, _contract(), artifacts={"geometry": observed})
+    )
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_GEOMETRY_DISCRETIZATION_EVIDENCE"
+
+
+def test_geometry_accepts_exact_sequence_feature_identity(tmp_path: Path):
+    """Catches strict identity matching accidentally rejecting an exact sequence record."""
+    observed = _validated_geometry()
+    observed["critical_features"] = [
+        {"id": "target", "discretized_cells": 16, "effective_m": 0.8}
+    ]
+
+    result = audit_geometry(
+        GateContext(tmp_path, _contract(), artifacts={"geometry": observed})
+    )
+
+    assert result.state is GateState.PASS
+
+
+def test_geometry_accepts_consistent_mapping_keyed_by_exact_feature_name(tmp_path: Path):
+    """Catches exact name-keyed evidence being lost when a feature also declares an id."""
+    contract = _contract()
+    contract["geometry"]["critical_features"][0]["name"] = "target display name"
+    observed = _validated_geometry()
+    observed["critical_features"] = {
+        "target display name": {
+            "id": "target",
+            "name": "target display name",
+            "discretized_cells": 16,
+            "effective_m": 0.8,
+        }
+    }
+
+    result = audit_geometry(
+        GateContext(tmp_path, contract, artifacts={"geometry": observed})
+    )
+
+    assert result.state is GateState.PASS
+
+
+def test_geometry_blocks_effective_length_inconsistent_with_cells_and_step(tmp_path: Path):
+    """Catches contradictory solver-effective length being accepted as validated truth."""
+    observed = _validated_geometry()
+    observed["critical_features"]["target"]["effective_m"] = 0.81
+
+    result = audit_geometry(
+        GateContext(tmp_path, _contract(), artifacts={"geometry": observed})
+    )
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_GEOMETRY_DISCRETIZATION_EVIDENCE"
+
+
+def test_geometry_labels_effective_length_derived_from_validated_cells(tmp_path: Path):
+    """Catches a calculated effective length being mislabeled as solver-supplied geometry."""
+    observed = _validated_geometry()
+    del observed["critical_features"]["target"]["effective_m"]
+    ctx = GateContext(tmp_path, _contract(), artifacts={"geometry": observed})
+
+    result = audit_geometry(ctx)
+
+    assert result.state is GateState.PASS
+    effective = ctx.artifacts["derived"]["geometry"]["critical_features"][0][
+        "validated_effective_geometry"
+    ]
+    assert effective == {
+        "discretized_cells": 16,
+        "effective_m": 0.8,
+        "classification": "derived_from_validated_cell_count",
+    }
+
+
+@pytest.mark.parametrize(
     "occupancy",
     [
         {"validated": True, "overlaps": ["cell:1,2"], "gaps": []},
@@ -182,6 +305,43 @@ def test_geometry_accepts_validated_gap_free_occupancy_manifest(tmp_path: Path):
     """Catches valid occupancy evidence being rejected merely because it is present."""
     observed = _validated_geometry()
     observed["material_occupancy"] = {"validated": True, "overlaps": [], "gaps": []}
+
+    result = audit_geometry(
+        GateContext(tmp_path, _contract(), artifacts={"geometry": observed})
+    )
+
+    assert result.state is GateState.PASS
+
+
+@pytest.mark.parametrize(
+    "occupancy",
+    [
+        {"overlaps": [], "gaps": []},
+        {"validated": True, "gaps": []},
+        {"validated": True, "overlaps": []},
+        {"state": "PASS", "overlaps": "none", "gaps": []},
+        {"state": "PASS", "overlaps": [], "gaps": -1},
+    ],
+)
+def test_geometry_blocks_incomplete_or_malformed_occupancy_manifest(
+    tmp_path: Path, occupancy: dict[str, Any]
+):
+    """Catches absent or malformed occupancy evidence being defaulted to no defects."""
+    observed = _validated_geometry()
+    observed["material_occupancy"] = occupancy
+
+    result = audit_geometry(
+        GateContext(tmp_path, _contract(), artifacts={"geometry": observed})
+    )
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_GEOMETRY_OCCUPANCY"
+
+
+def test_geometry_accepts_explicit_accepted_occupancy_counts(tmp_path: Path):
+    """Catches valid count-form occupancy evidence being rejected as non-list data."""
+    observed = _validated_geometry()
+    observed["material_occupancy"] = {"state": "ACCEPTED", "overlaps": 0, "gaps": 0}
 
     result = audit_geometry(
         GateContext(tmp_path, _contract(), artifacts={"geometry": observed})

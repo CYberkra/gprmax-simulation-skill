@@ -11,10 +11,12 @@ from scripts.core import GateContext, GateResult, GateState
 
 
 _AXES = frozenset({"x", "y", "z"})
+_EFFECTIVE_LENGTH_REL_TOL = 1e-9
+_EFFECTIVE_LENGTH_ABS_TOL_M = 1e-12
 _THREE_DIMENSIONAL_OBJECTIVES = frozenset(
     {"finite_target", "antenna", "b_scan", "bscan", "hardware", "system"}
 )
-_CLAIM_GRADE_SCOPES = frozenset({"physical", "engineering"})
+_SUPPORTED_CLAIM_SCOPES = frozenset({"numerical", "physical", "engineering"})
 
 
 @dataclass(frozen=True)
@@ -54,17 +56,28 @@ def quantize_length(length_m: float, step_m: float) -> GeometryQuantization:
 
 def audit_geometry(ctx: GateContext) -> GateResult:
     """Audit coordinate, dimensionality, and validated discretized geometry truth."""
-    report: dict[str, Any] = {"critical_features": []}
+    report: dict[str, Any] = {
+        "critical_features": [],
+        "effective_length_consistency_tolerance": {
+            "relative": _EFFECTIVE_LENGTH_REL_TOL,
+            "absolute_m": _EFFECTIVE_LENGTH_ABS_TOL_M,
+        },
+    }
     try:
         dimension = _dimension(ctx.contract)
         task = _mapping(ctx.contract.get("task"), "task")
         objective = _required_text(task, "objective", "task").lower().replace("-", "_")
-        claim_scope = _required_text(task, "claim_scope", "task").lower()
+        claim_scope = _claim_scope(task)
         report["dimension"] = dimension
         if (
             dimension == "2d"
-            and claim_scope in _CLAIM_GRADE_SCOPES
-            and objective in _THREE_DIMENSIONAL_OBJECTIVES
+            and (
+                claim_scope == "engineering"
+                or (
+                    claim_scope == "physical"
+                    and objective in _THREE_DIMENSIONAL_OBJECTIVES
+                )
+            )
         ):
             _publish_derived(ctx, "geometry", report)
             return _geometry_result(
@@ -161,6 +174,20 @@ def _dimension(contract: Mapping[str, Any]) -> str:
             "BLOCK_GEOMETRY_DIMENSION", "model.dimension must be '2d' or '3d'"
         )
     return dimension
+
+
+def _claim_scope(task: Mapping[str, Any]) -> str:
+    raw = task.get("claim_scope")
+    if not isinstance(raw, str) or not raw.strip():
+        raise _GeometryAuditError(
+            "BLOCK_CLAIM_SCOPE", "task.claim_scope must be a supported non-empty string"
+        )
+    scope = raw.strip().lower()
+    if scope not in _SUPPORTED_CLAIM_SCOPES:
+        raise _GeometryAuditError(
+            "BLOCK_CLAIM_SCOPE", f"task.claim_scope {scope!r} is not supported"
+        )
+    return scope
 
 
 def _coordinate_axes(contract: Mapping[str, Any], dimension: str) -> tuple[str, ...]:
@@ -279,11 +306,28 @@ def _feature_report(
     record = _observed_feature(observed_geometry, feature)
     if record is not None:
         cells = _positive_integer(record.get("discretized_cells"), "discretized_cells")
-        effective = record.get("effective_m", cells * spacing[axis])
+        expected_effective = _cell_length(cells, spacing[axis])
+        if "effective_m" in record:
+            effective = _positive_finite(record["effective_m"], "effective_m")
+            if not math.isclose(
+                effective,
+                expected_effective,
+                rel_tol=_EFFECTIVE_LENGTH_REL_TOL,
+                abs_tol=_EFFECTIVE_LENGTH_ABS_TOL_M,
+            ):
+                raise _GeometryAuditError(
+                    "BLOCK_GEOMETRY_DISCRETIZATION_EVIDENCE",
+                    f"critical feature {identity} effective_m is inconsistent with "
+                    "discretized_cells * step_m",
+                )
+            classification = "validated_geometry_evidence"
+        else:
+            effective = expected_effective
+            classification = "derived_from_validated_cell_count"
         report["validated_effective_geometry"] = {
             "discretized_cells": cells,
-            "effective_m": _positive_finite(effective, "effective_m"),
-            "classification": "validated_geometry_evidence",
+            "effective_m": effective,
+            "classification": classification,
         }
     return report
 
@@ -302,28 +346,54 @@ def _observed_feature(
     if geometry is None:
         return None
     records = geometry.get("critical_features")
-    identities = {
-        str(feature[key]).strip()
-        for key in ("id", "name")
-        if key in feature and str(feature[key]).strip()
-    }
+    expected = _feature_identities(feature)
+    primary_key = "id" if "id" in expected else "name"
+    primary_value = expected[primary_key]
     if isinstance(records, Mapping):
-        for identity in identities:
-            record = records.get(identity)
-            if isinstance(record, Mapping):
+        for key in ("id", "name"):
+            if key not in expected:
+                continue
+            record = records.get(expected[key])
+            if not isinstance(record, Mapping):
+                continue
+            if _record_identity_is_consistent(record, expected):
                 return record
+            return None
     elif _is_sequence(records):
         for record in records:
             if not isinstance(record, Mapping):
                 continue
-            record_ids = {
-                str(record[key]).strip()
-                for key in ("id", "name")
-                if key in record and str(record[key]).strip()
-            }
-            if identities.intersection(record_ids):
+            raw_primary = record.get(primary_key)
+            if not isinstance(raw_primary, str) or raw_primary.strip() != primary_value:
+                continue
+            if _record_identity_is_consistent(record, expected):
                 return record
+            return None
     return None
+
+
+def _feature_identities(feature: Mapping[str, Any]) -> dict[str, str]:
+    return {
+        key: str(feature[key]).strip()
+        for key in ("id", "name")
+        if key in feature and isinstance(feature[key], str) and str(feature[key]).strip()
+    }
+
+
+def _record_identity_is_consistent(
+    record: Mapping[str, Any], expected: Mapping[str, str]
+) -> bool:
+    for key in ("id", "name"):
+        if key not in record:
+            continue
+        value = record[key]
+        if (
+            not isinstance(value, str)
+            or key not in expected
+            or value.strip() != expected[key]
+        ):
+            return False
+    return True
 
 
 def _occupancy_report(artifacts: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -335,18 +405,48 @@ def _occupancy_report(artifacts: Mapping[str, Any]) -> dict[str, Any] | None:
         raise _GeometryAuditError(
             "BLOCK_GEOMETRY_OCCUPANCY", "material occupancy manifest must be a mapping"
         )
-    overlaps = occupancy.get("overlaps", [])
-    gaps = occupancy.get("gaps", [])
-    if not _is_sequence(overlaps) or not _is_sequence(gaps):
+    validation_states: list[bool] = []
+    if "validated" in occupancy:
+        if not isinstance(occupancy["validated"], bool):
+            raise _GeometryAuditError(
+                "BLOCK_GEOMETRY_OCCUPANCY", "occupancy validated must be boolean"
+            )
+        validation_states.append(occupancy["validated"])
+    for key in ("state", "status"):
+        if key in occupancy:
+            value = occupancy[key]
+            if not isinstance(value, str) or not value.strip():
+                raise _GeometryAuditError(
+                    "BLOCK_GEOMETRY_OCCUPANCY", f"occupancy {key} must be non-empty text"
+                )
+            validation_states.append(value.strip().upper() in {"PASS", "ACCEPTED"})
+    if not validation_states:
         raise _GeometryAuditError(
-            "BLOCK_GEOMETRY_OCCUPANCY", "occupancy overlaps and gaps must be sequences"
+            "BLOCK_GEOMETRY_OCCUPANCY",
+            "occupancy manifest must explicitly declare validated or an accepted state",
+        )
+    if "overlaps" not in occupancy or "gaps" not in occupancy:
+        raise _GeometryAuditError(
+            "BLOCK_GEOMETRY_OCCUPANCY",
+            "occupancy manifest must explicitly declare overlaps and gaps",
         )
     return {
-        "validated": occupancy.get("validated") is True,
-        "overlap_count": len(overlaps),
-        "gap_count": len(gaps),
+        "validated": all(validation_states),
+        "overlap_count": _occupancy_count(occupancy["overlaps"], "overlaps"),
+        "gap_count": _occupancy_count(occupancy["gaps"], "gaps"),
         "classification": "validated_material_occupancy_evidence",
     }
+
+
+def _occupancy_count(value: object, name: str) -> int:
+    if _is_sequence(value):
+        return len(value)
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    raise _GeometryAuditError(
+        "BLOCK_GEOMETRY_OCCUPANCY",
+        f"occupancy {name} must be a list or non-negative integer count",
+    )
 
 
 def _text_list(value: object, name: str, *, nonempty: bool) -> list[str]:
@@ -379,6 +479,10 @@ def _positive_integer(value: object, name: str) -> int:
     if not number.is_integer():
         raise ValueError(f"{name} must be a positive integer")
     return int(number)
+
+
+def _cell_length(cells: int, step_m: float) -> float:
+    return float(Decimal(cells) * Decimal(str(step_m)))
 
 
 def _positive_finite(value: object, name: str) -> float:
