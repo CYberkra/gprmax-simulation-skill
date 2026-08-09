@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
+import hashlib
 from itertools import product
+import json
 import math
 from numbers import Real
 from pathlib import Path
@@ -129,7 +131,7 @@ def audit_precision(ctx: GateContext) -> GateResult:
                     "BLOCK_FP64_REQUIRED",
                     "risk-flagged FP32 execution requires explicit passing FP32 adequacy evidence",
                 )
-            adequacy, adequacy_ref = _audit_fp32_adequacy(ctx, raw_adequacy, output["resolved"])
+            adequacy, adequacy_ref = _audit_fp32_adequacy(ctx, raw_adequacy, output)
             report["fp32_adequacy"] = adequacy
             evidence.append(adequacy_ref)
             if not adequacy["passed"]:
@@ -211,8 +213,12 @@ def _risk_flags(contract: Mapping[str, Any], numerics: Mapping[str, Any]) -> tup
                     "BLOCK_PRECISION_CONTRACT", "risk_flags must contain non-empty strings"
                 )
             normalized = item.strip().lower()
-            if normalized in _PRECISION_RISK_FLAGS:
-                flags.add(normalized)
+            if normalized not in _PRECISION_RISK_FLAGS:
+                raise _PrecisionAuditError(
+                    "BLOCK_PRECISION_CONTRACT",
+                    f"unsupported precision risk flag {normalized!r}",
+                )
+            flags.add(normalized)
     return tuple(sorted(flags))
 
 
@@ -268,11 +274,9 @@ def _inspect_output(ctx: GateContext) -> dict[str, Any]:
     path = _resolve_project_file(ctx.project_root, path_ref, "BLOCK_OUTPUT_EVIDENCE")
     try:
         with h5py.File(path, "r") as handle:
-            if dataset_ref not in handle or not isinstance(handle[dataset_ref], h5py.Dataset):
-                raise _PrecisionAuditError(
-                    "BLOCK_OUTPUT_EVIDENCE", f"receiver dataset {dataset_ref!r} is missing"
-                )
-            dataset = handle[dataset_ref]
+            dataset = _local_nonvirtual_dataset(
+                handle, dataset_ref, "BLOCK_OUTPUT_EVIDENCE", "receiver dataset"
+            )
             dtype = np.dtype(dataset.dtype)
             if dtype.kind != "f" or dtype.name not in {"float32", "float64"}:
                 raise _PrecisionAuditError(
@@ -331,7 +335,7 @@ def _runtime_dtypes(ctx: GateContext) -> dict[str, Any]:
 
 
 def _audit_fp32_adequacy(
-    ctx: GateContext, raw: object, output_path: Path
+    ctx: GateContext, raw: object, output: Mapping[str, Any]
 ) -> tuple[dict[str, Any], str]:
     evidence = _mapping(
         raw, "numerics.fp32_adequacy_evidence", "BLOCK_FP32_ADEQUACY_EVIDENCE"
@@ -360,29 +364,29 @@ def _audit_fp32_adequacy(
     atol = _nonnegative_finite(
         evidence.get("atol"), "fp32 adequacy atol", "BLOCK_FP32_ADEQUACY_EVIDENCE"
     )
+    matched_run = _matched_run_provenance(evidence)
     fixture_path = _resolve_project_file(
         ctx.project_root, fixture_ref, "BLOCK_FP32_ADEQUACY_EVIDENCE"
     )
-    if fixture_path == output_path:
+    if fixture_path == output["resolved"]:
         raise _PrecisionAuditError(
             "BLOCK_FP32_ADEQUACY_EVIDENCE",
             "FP32 adequacy comparison fixture must be independent of the audited output",
         )
     try:
         with h5py.File(fixture_path, "r") as handle:
-            if candidate_ref not in handle or reference_ref not in handle:
-                raise _PrecisionAuditError(
-                    "BLOCK_FP32_ADEQUACY_EVIDENCE",
-                    "FP32 adequacy fixture is missing a declared comparison dataset",
-                )
-            candidate_dataset = handle[candidate_ref]
-            reference_dataset = handle[reference_ref]
-            if not isinstance(candidate_dataset, h5py.Dataset) or not isinstance(
-                reference_dataset, h5py.Dataset
-            ):
-                raise _PrecisionAuditError(
-                    "BLOCK_FP32_ADEQUACY_EVIDENCE", "adequacy comparison entries must be datasets"
-                )
+            candidate_dataset = _local_nonvirtual_dataset(
+                handle,
+                candidate_ref,
+                "BLOCK_FP32_ADEQUACY_EVIDENCE",
+                "FP32 candidate dataset",
+            )
+            reference_dataset = _local_nonvirtual_dataset(
+                handle,
+                reference_ref,
+                "BLOCK_FP32_ADEQUACY_EVIDENCE",
+                "FP64 reference dataset",
+            )
             if np.dtype(candidate_dataset.dtype).name != "float32" or np.dtype(
                 reference_dataset.dtype
             ).name != "float64":
@@ -394,6 +398,23 @@ def _audit_fp32_adequacy(
                 raise _PrecisionAuditError(
                     "BLOCK_FP32_ADEQUACY_EVIDENCE",
                     "FP32 candidate and FP64 reference must be non-empty and shape-aligned",
+                )
+            if not _candidate_equals_audited_output(candidate_dataset, output):
+                raise _PrecisionAuditError(
+                    "BLOCK_FP32_ADEQUACY_EVIDENCE",
+                    "FP32 candidate must exactly equal the actual audited receiver dataset",
+                )
+            candidate_hash = _dataset_sha256(candidate_dataset)
+            reference_hash = _dataset_sha256(reference_dataset)
+            if candidate_hash != matched_run["candidate_dataset_sha256"]:
+                raise _PrecisionAuditError(
+                    "BLOCK_FP32_ADEQUACY_EVIDENCE",
+                    "FP32 candidate dataset SHA-256 does not match matched-run provenance",
+                )
+            if reference_hash != matched_run["reference_dataset_sha256"]:
+                raise _PrecisionAuditError(
+                    "BLOCK_FP32_ADEQUACY_EVIDENCE",
+                    "FP64 reference dataset SHA-256 does not match matched-run provenance",
                 )
             passed, max_abs_error, max_relative_error = _compare_adequacy_datasets(
                 candidate_dataset, reference_dataset, rtol, atol
@@ -415,9 +436,77 @@ def _audit_fp32_adequacy(
             "atol": atol,
             "max_abs_error": max_abs_error,
             "max_relative_error": max_relative_error,
+            "matched_run": {
+                "candidate_run_id": matched_run["candidate_run_id"],
+                "reference_run_id": matched_run["reference_run_id"],
+                "inputs_sha256": matched_run["candidate_inputs_sha256"],
+                "candidate_precision": "float32",
+                "reference_precision": "float64",
+                "declared_changes": ["precision"],
+                "candidate_dataset_sha256": candidate_hash,
+                "reference_dataset_sha256": reference_hash,
+            },
         },
         fixture_ref.strip(),
     )
+
+
+def _matched_run_provenance(evidence: Mapping[str, Any]) -> dict[str, str]:
+    code = "BLOCK_FP32_ADEQUACY_EVIDENCE"
+    matched = _mapping(
+        evidence.get("matched_run"),
+        "numerics.fp32_adequacy_evidence.matched_run",
+        code,
+    )
+    candidate_run_id = _required_text(
+        matched, "candidate_run_id", "matched_run.candidate_run_id", code
+    ).strip()
+    reference_run_id = _required_text(
+        matched, "reference_run_id", "matched_run.reference_run_id", code
+    ).strip()
+    if candidate_run_id == reference_run_id:
+        raise _PrecisionAuditError(code, "matched FP32 and FP64 runs must have distinct run IDs")
+    candidate_inputs_hash = _required_sha256(
+        matched, "candidate_inputs_sha256", "matched_run.candidate_inputs_sha256"
+    )
+    reference_inputs_hash = _required_sha256(
+        matched, "reference_inputs_sha256", "matched_run.reference_inputs_sha256"
+    )
+    if candidate_inputs_hash != reference_inputs_hash:
+        raise _PrecisionAuditError(
+            code, "matched FP32 and FP64 runs must have identical input SHA-256 values"
+        )
+    candidate_precision = _required_text(
+        matched, "candidate_precision", "matched_run.candidate_precision", code
+    ).strip().lower()
+    reference_precision = _required_text(
+        matched, "reference_precision", "matched_run.reference_precision", code
+    ).strip().lower()
+    if candidate_precision != "float32" or reference_precision != "float64":
+        raise _PrecisionAuditError(
+            code, "matched-run precision must change from float32 candidate to float64 reference"
+        )
+    declared_changes = matched.get("declared_changes")
+    if not isinstance(declared_changes, Sequence) or isinstance(
+        declared_changes, (str, bytes)
+    ):
+        raise _PrecisionAuditError(code, "matched_run.declared_changes must be a sequence")
+    if tuple(declared_changes) != ("precision",):
+        raise _PrecisionAuditError(
+            code, "precision must be the sole declared matched-run change"
+        )
+    return {
+        "candidate_run_id": candidate_run_id,
+        "reference_run_id": reference_run_id,
+        "candidate_inputs_sha256": candidate_inputs_hash,
+        "reference_inputs_sha256": reference_inputs_hash,
+        "candidate_dataset_sha256": _required_sha256(
+            matched, "candidate_dataset_sha256", "matched_run.candidate_dataset_sha256"
+        ),
+        "reference_dataset_sha256": _required_sha256(
+            matched, "reference_dataset_sha256", "matched_run.reference_dataset_sha256"
+        ),
+    }
 
 
 def _audit_precision_floor(
@@ -483,6 +572,84 @@ def _dataset_is_finite(dataset: h5py.Dataset) -> bool:
     )
 
 
+def _local_nonvirtual_dataset(
+    handle: h5py.File,
+    dataset_ref: str,
+    code: str,
+    label: str,
+) -> h5py.Dataset:
+    parts = tuple(part for part in dataset_ref.strip().split("/") if part)
+    if not parts or any(part in {".", ".."} for part in parts):
+        raise _PrecisionAuditError(code, f"{label} path is invalid")
+    current: h5py.Group = handle
+    for index, part in enumerate(parts):
+        link = current.get(part, getlink=True)
+        if link is None:
+            raise _PrecisionAuditError(code, f"{label} {dataset_ref!r} is missing")
+        if not isinstance(link, h5py.HardLink):
+            raise _PrecisionAuditError(
+                code, f"{label} must not traverse external or symbolic HDF5 links"
+            )
+        value = current.get(part)
+        if index < len(parts) - 1:
+            if not isinstance(value, h5py.Group):
+                raise _PrecisionAuditError(code, f"{label} path traverses a non-group object")
+            current = value
+            continue
+        if not isinstance(value, h5py.Dataset):
+            raise _PrecisionAuditError(code, f"{label} must resolve to an HDF5 dataset")
+        if value.is_virtual:
+            raise _PrecisionAuditError(code, f"{label} must not be a virtual HDF5 dataset")
+        return value
+    raise _PrecisionAuditError(code, f"{label} {dataset_ref!r} is missing")
+
+
+def _candidate_equals_audited_output(
+    candidate: h5py.Dataset, output: Mapping[str, Any]
+) -> bool:
+    try:
+        with h5py.File(output["resolved"], "r") as handle:
+            audited = _local_nonvirtual_dataset(
+                handle,
+                output["dataset"],
+                "BLOCK_FP32_ADEQUACY_EVIDENCE",
+                "audited receiver dataset",
+            )
+            if (
+                np.dtype(candidate.dtype) != np.dtype(audited.dtype)
+                or tuple(candidate.shape) != tuple(audited.shape)
+            ):
+                return False
+            return all(
+                np.array_equal(
+                    np.asarray(candidate[selection]), np.asarray(audited[selection])
+                )
+                for selection in _bounded_hdf5_slices(tuple(candidate.shape))
+            )
+    except _PrecisionAuditError:
+        raise
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        raise _PrecisionAuditError(
+            "BLOCK_FP32_ADEQUACY_EVIDENCE",
+            f"audited receiver could not be compared with FP32 candidate: {error}",
+        ) from error
+
+
+def _dataset_sha256(dataset: h5py.Dataset) -> str:
+    digest = hashlib.sha256()
+    digest.update(
+        json.dumps(
+            {"dtype": np.dtype(dataset.dtype).name, "shape": list(dataset.shape)},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+    digest.update(b"\n")
+    for selection in _bounded_hdf5_slices(tuple(dataset.shape)):
+        digest.update(np.ascontiguousarray(dataset[selection]).tobytes(order="C"))
+    return digest.hexdigest()
+
+
 def _compare_adequacy_datasets(
     candidate: h5py.Dataset,
     reference: h5py.Dataset,
@@ -499,20 +666,35 @@ def _compare_adequacy_datasets(
             raise _PrecisionAuditError(
                 "BLOCK_FP32_ADEQUACY_EVIDENCE", "FP32 adequacy datasets must be finite"
             )
-        absolute_error = np.abs(candidate_block - reference_block)
-        tolerance = atol + rtol * np.abs(reference_block)
+        with np.errstate(over="ignore", invalid="ignore"):
+            absolute_error = np.abs(candidate_block - reference_block)
+            tolerance = atol + rtol * np.abs(reference_block)
+        if not np.isfinite(tolerance).all():
+            raise _PrecisionAuditError(
+                "BLOCK_FP32_ADEQUACY_EVIDENCE",
+                "FP32 adequacy per-sample tolerances must remain finite",
+            )
+        if not np.isfinite(absolute_error).all():
+            raise _PrecisionAuditError(
+                "BLOCK_FP32_ADEQUACY_EVIDENCE",
+                "FP32 adequacy per-sample errors must remain finite",
+            )
         passed = passed and bool(np.all(absolute_error <= tolerance))
         max_abs_error = max(max_abs_error, float(np.max(absolute_error)))
         nonzero_reference = np.abs(reference_block) > 0.0
         if np.any(nonzero_reference):
+            with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+                relative_error = absolute_error[nonzero_reference] / np.abs(
+                    reference_block[nonzero_reference]
+                )
+            if not np.isfinite(relative_error).all():
+                raise _PrecisionAuditError(
+                    "BLOCK_FP32_ADEQUACY_EVIDENCE",
+                    "FP32 adequacy relative errors must remain finite",
+                )
             max_relative_error = max(
                 max_relative_error,
-                float(
-                    np.max(
-                        absolute_error[nonzero_reference]
-                        / np.abs(reference_block[nonzero_reference])
-                    )
-                ),
+                float(np.max(relative_error)),
             )
     return passed, max_abs_error, max_relative_error
 
@@ -520,8 +702,13 @@ def _compare_adequacy_datasets(
 def _receiver_equals_total(output: Mapping[str, Any], total: np.ndarray) -> bool:
     try:
         with h5py.File(output["resolved"], "r") as handle:
-            dataset = handle[output["dataset"]]
-            if not isinstance(dataset, h5py.Dataset) or tuple(dataset.shape) != total.shape:
+            dataset = _local_nonvirtual_dataset(
+                handle,
+                output["dataset"],
+                "BLOCK_PRECISION_AUDIT_EVIDENCE",
+                "receiver dataset",
+            )
+            if tuple(dataset.shape) != total.shape:
                 return False
             return all(
                 np.array_equal(np.asarray(dataset[selection]), total[selection])
@@ -575,6 +762,14 @@ def _required_text(value: Mapping[str, Any], key: str, path: str, code: str) -> 
     raw = value.get(key)
     if not isinstance(raw, str) or not raw.strip():
         raise _PrecisionAuditError(code, f"{path} must be non-empty text")
+    return raw
+
+
+def _required_sha256(value: Mapping[str, Any], key: str, path: str) -> str:
+    code = "BLOCK_FP32_ADEQUACY_EVIDENCE"
+    raw = _required_text(value, key, path, code).strip().lower()
+    if len(raw) != 64 or any(character not in "0123456789abcdef" for character in raw):
+        raise _PrecisionAuditError(code, f"{path} must be a 64-character SHA-256 hex digest")
     return raw
 
 

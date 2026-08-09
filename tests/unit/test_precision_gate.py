@@ -1,3 +1,5 @@
+import hashlib
+import json
 from pathlib import Path
 
 import h5py
@@ -15,6 +17,50 @@ def _write_dataset(path: Path, dataset: str, values: np.ndarray) -> None:
 
 def _runtime(real_dtype: str = "float32", complex_dtype: str = "complex64") -> dict[str, str]:
     return {"real_dtype": real_dtype, "complex_dtype": complex_dtype}
+
+
+def _array_sha256(values: np.ndarray) -> str:
+    array = np.asarray(values)
+    digest = hashlib.sha256()
+    digest.update(
+        json.dumps(
+            {"dtype": array.dtype.name, "shape": list(array.shape)},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+    digest.update(b"\n")
+    digest.update(np.ascontiguousarray(array).tobytes(order="C"))
+    return digest.hexdigest()
+
+
+def _adequacy_evidence(
+    candidate: np.ndarray,
+    reference: np.ndarray,
+    *,
+    fixture: str = "adequacy.h5",
+    rtol: float = 1e-5,
+    atol: float = 1e-8,
+) -> dict[str, object]:
+    input_hash = "a" * 64
+    return {
+        "comparison_fixture": fixture,
+        "fp32_dataset": "/candidate",
+        "fp64_dataset": "/reference",
+        "rtol": rtol,
+        "atol": atol,
+        "matched_run": {
+            "candidate_run_id": "run-fp32",
+            "reference_run_id": "run-fp64",
+            "candidate_inputs_sha256": input_hash,
+            "reference_inputs_sha256": input_hash,
+            "candidate_precision": "float32",
+            "reference_precision": "float64",
+            "declared_changes": ["precision"],
+            "candidate_dataset_sha256": _array_sha256(candidate),
+            "reference_dataset_sha256": _array_sha256(reference),
+        },
+    }
 
 
 def _context(
@@ -121,6 +167,38 @@ def test_nonfinite_receiver_data_blocks(tmp_path: Path):
     assert result.code == "BLOCK_OUTPUT_NONFINITE"
 
 
+@pytest.mark.parametrize("link_kind", ["external", "virtual"])
+def test_receiver_rejects_dereferenced_hdf5_sources_outside_project(
+    tmp_path: Path, link_kind: str
+):
+    """Catches link/VDS dereferencing that bypasses project-root containment."""
+    project = tmp_path / "project"
+    project.mkdir()
+    outside = tmp_path / "outside.h5"
+    values = np.array([1.0, 2.0], dtype=np.float32)
+    _write_dataset(outside, "/data", values)
+    with h5py.File(project / "run.h5", "w", libver="latest") as handle:
+        if link_kind == "external":
+            handle["receiver"] = h5py.ExternalLink(str(outside), "/data")
+        else:
+            layout = h5py.VirtualLayout(shape=values.shape, dtype=values.dtype)
+            layout[:] = h5py.VirtualSource(str(outside), "/data", shape=values.shape)
+            handle.create_virtual_dataset("receiver", layout)
+    ctx = GateContext(
+        project,
+        {
+            "numerics": {"precision_requirement": "auto"},
+            "outputs": {"hdf5": "run.h5", "receiver_dataset": "/receiver"},
+        },
+        artifacts={"environment": _runtime()},
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_OUTPUT_EVIDENCE"
+
+
 @pytest.mark.parametrize(
     "environment",
     [
@@ -197,6 +275,49 @@ def test_risk_flag_requires_fp64_without_explicit_fp32_adequacy_evidence(tmp_pat
     assert result.code == "BLOCK_FP64_REQUIRED"
 
 
+@pytest.mark.parametrize(
+    "flag",
+    [
+        "weak_differential",
+        "long_distance",
+        "coherent_phase",
+        "high_dynamic_range",
+        "fine_delay_fit",
+    ],
+)
+def test_every_supported_precision_risk_flag_is_accepted(tmp_path: Path, flag: str):
+    """Catches accidental removal of any mandated risk vocabulary entry."""
+    ctx = _context(
+        tmp_path,
+        values=np.array([1.0, 2.0], dtype=np.float64),
+        numerics={"precision_requirement": "auto", "risk_flags": [flag]},
+        artifacts={"environment": _runtime("float64", "complex128")},
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.PASS
+    assert result.code == "PASS_PRECISION"
+
+
+@pytest.mark.parametrize("flag", ["weak-differential", "unknown_precision_risk", 7])
+def test_unknown_or_non_string_precision_risk_flag_blocks_contract(
+    tmp_path: Path, flag: object
+):
+    """Catches misspelled/unknown risk declarations being silently discarded."""
+    ctx = _context(
+        tmp_path,
+        values=np.array([1.0, 2.0], dtype=np.float64),
+        numerics={"precision_requirement": "auto", "risk_flags": [flag]},
+        artifacts={"environment": _runtime("float64", "complex128")},
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_PRECISION_CONTRACT"
+
+
 def test_fp32_adequacy_fixture_must_exist_and_be_complete(tmp_path: Path):
     """Catches a declared but non-reproducible FP32 policy exception."""
     ctx = _context(
@@ -222,21 +343,18 @@ def test_fp32_adequacy_fixture_must_exist_and_be_complete(tmp_path: Path):
 
 def test_fp32_adequacy_fixture_must_pass_declared_comparison(tmp_path: Path):
     """Catches accepting FP32 evidence without evaluating it against its FP64 reference."""
+    candidate = np.array([1.0, 1.2], dtype=np.float32)
+    reference = np.array([1.0, 1.0], dtype=np.float64)
     with h5py.File(tmp_path / "adequacy.h5", "w") as handle:
-        handle.create_dataset("candidate", data=np.array([1.0, 1.2], dtype=np.float32))
-        handle.create_dataset("reference", data=np.array([1.0, 1.0], dtype=np.float64))
+        handle.create_dataset("candidate", data=candidate)
+        handle.create_dataset("reference", data=reference)
     ctx = _context(
         tmp_path,
+        values=candidate,
         numerics={
             "precision_requirement": "float32",
             "risk_flags": ["high_dynamic_range"],
-            "fp32_adequacy_evidence": {
-                "comparison_fixture": "adequacy.h5",
-                "fp32_dataset": "/candidate",
-                "fp64_dataset": "/reference",
-                "rtol": 1e-5,
-                "atol": 1e-8,
-            },
+            "fp32_adequacy_evidence": _adequacy_evidence(candidate, reference),
         },
     )
 
@@ -248,21 +366,18 @@ def test_fp32_adequacy_fixture_must_pass_declared_comparison(tmp_path: Path):
 
 def test_passing_fp32_comparison_fixture_allows_risk_flag_exception(tmp_path: Path):
     """Catches ignoring valid explicit FP32 adequacy evidence for risk-flagged work."""
+    candidate = np.array([1.0, 1.000001], dtype=np.float32)
+    reference = np.array([1.0, 1.0000011], dtype=np.float64)
     with h5py.File(tmp_path / "adequacy.h5", "w") as handle:
-        handle.create_dataset("candidate", data=np.array([1.0, 1.000001], dtype=np.float32))
-        handle.create_dataset("reference", data=np.array([1.0, 1.0000011], dtype=np.float64))
+        handle.create_dataset("candidate", data=candidate)
+        handle.create_dataset("reference", data=reference)
     ctx = _context(
         tmp_path,
+        values=candidate,
         numerics={
             "precision_requirement": "float32",
             "risk_flags": ["fine_delay_fit"],
-            "fp32_adequacy_evidence": {
-                "comparison_fixture": "adequacy.h5",
-                "fp32_dataset": "/candidate",
-                "fp64_dataset": "/reference",
-                "rtol": 1e-5,
-                "atol": 1e-8,
-            },
+            "fp32_adequacy_evidence": _adequacy_evidence(candidate, reference),
         },
     )
 
@@ -272,6 +387,135 @@ def test_passing_fp32_comparison_fixture_allows_risk_flag_exception(tmp_path: Pa
     assert result.code == "PASS_PRECISION"
     assert result.evidence == ("run.h5", "adequacy.h5")
     assert ctx.artifacts["derived"]["precision"]["fp32_adequacy"]["passed"] is True
+
+
+def test_fp32_candidate_must_exactly_equal_audited_receiver(tmp_path: Path):
+    """Catches unrelated comparison arrays authorizing the audited FP32 output."""
+    receiver = np.array([2.0, 2.0], dtype=np.float32)
+    candidate = np.array([1.0, 1.0], dtype=np.float32)
+    reference = np.array([1.0, 1.0], dtype=np.float64)
+    with h5py.File(tmp_path / "adequacy.h5", "w") as handle:
+        handle.create_dataset("candidate", data=candidate)
+        handle.create_dataset("reference", data=reference)
+    ctx = _context(
+        tmp_path,
+        values=receiver,
+        numerics={
+            "precision_requirement": "float32",
+            "risk_flags": ["weak_differential"],
+            "fp32_adequacy_evidence": _adequacy_evidence(candidate, reference),
+        },
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("reference_inputs_sha256", "b" * 64),
+        ("declared_changes", ["precision", "grid"]),
+        ("candidate_dataset_sha256", "0" * 64),
+        ("reference_dataset_sha256", "0" * 64),
+    ],
+)
+def test_fp32_adequacy_requires_verified_matched_run_provenance(
+    tmp_path: Path, field: str, value: object
+):
+    """Catches unverified input identity, extra run changes, or false dataset hashes."""
+    candidate = np.array([1.0, 1.000001], dtype=np.float32)
+    reference = np.array([1.0, 1.0000011], dtype=np.float64)
+    with h5py.File(tmp_path / "adequacy.h5", "w") as handle:
+        handle.create_dataset("candidate", data=candidate)
+        handle.create_dataset("reference", data=reference)
+    evidence = _adequacy_evidence(candidate, reference)
+    evidence["matched_run"][field] = value
+    ctx = _context(
+        tmp_path,
+        values=candidate,
+        numerics={
+            "precision_requirement": "float32",
+            "risk_flags": ["long_distance"],
+            "fp32_adequacy_evidence": evidence,
+        },
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
+
+
+def test_overflowing_per_sample_tolerance_blocks_as_malformed_evidence(tmp_path: Path):
+    """Catches infinite allclose tolerances turning any finite FP32 candidate into PASS."""
+    candidate = np.array([np.finfo(np.float32).max], dtype=np.float32)
+    reference = np.array([np.finfo(np.float64).max], dtype=np.float64)
+    with h5py.File(tmp_path / "adequacy.h5", "w") as handle:
+        handle.create_dataset("candidate", data=candidate)
+        handle.create_dataset("reference", data=reference)
+    ctx = _context(
+        tmp_path,
+        values=candidate,
+        numerics={
+            "precision_requirement": "float32",
+            "risk_flags": ["coherent_phase"],
+            "fp32_adequacy_evidence": _adequacy_evidence(
+                candidate,
+                reference,
+                rtol=float(np.finfo(np.float64).max),
+                atol=0.0,
+            ),
+        },
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
+
+
+@pytest.mark.parametrize("link_kind", ["external", "virtual"])
+def test_fp32_comparison_rejects_dereferenced_sources_outside_project(
+    tmp_path: Path, link_kind: str
+):
+    """Catches comparison links/VDS loading arrays from outside the evidence root."""
+    project = tmp_path / "project"
+    project.mkdir()
+    candidate = np.array([1.0, 1.000001], dtype=np.float32)
+    reference = np.array([1.0, 1.0000011], dtype=np.float64)
+    _write_dataset(project / "run.h5", "/rxs/rx1/Ez", candidate)
+    outside = tmp_path / "outside-candidate.h5"
+    _write_dataset(outside, "/candidate", candidate)
+    with h5py.File(project / "adequacy.h5", "w", libver="latest") as handle:
+        if link_kind == "external":
+            handle["candidate"] = h5py.ExternalLink(str(outside), "/candidate")
+        else:
+            layout = h5py.VirtualLayout(shape=candidate.shape, dtype=candidate.dtype)
+            layout[:] = h5py.VirtualSource(
+                str(outside), "/candidate", shape=candidate.shape
+            )
+            handle.create_virtual_dataset("candidate", layout)
+        handle.create_dataset("reference", data=reference)
+    ctx = GateContext(
+        project,
+        {
+            "numerics": {
+                "precision_requirement": "float32",
+                "risk_flags": ["fine_delay_fit"],
+                "fp32_adequacy_evidence": _adequacy_evidence(candidate, reference),
+            },
+            "outputs": {"hdf5": "run.h5", "receiver_dataset": "/rxs/rx1/Ez"},
+        },
+        artifacts={"environment": _runtime()},
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
 
 
 def test_differential_within_declared_ulp_safety_factor_blocks(tmp_path: Path):
