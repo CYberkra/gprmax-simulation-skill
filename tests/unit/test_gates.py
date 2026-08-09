@@ -7,6 +7,82 @@ from scripts.core import GateContext, GateResult, GateState
 from scripts.gates import GateContractError, GateRegistry, run_stage, write_gate_report
 
 
+def test_source_change_invalidates_all_downstream():
+    """Catches invalidation that stops before reaching downstream claims."""
+    from scripts.gates import DependencyGraph
+
+    graph = DependencyGraph()
+    graph.add("source", "processing")
+    graph.add("processing", "metrics")
+    graph.add("metrics", "claims")
+
+    assert graph.invalidate({"source"}) == {"processing", "metrics", "claims"}
+
+
+def test_default_graph_invalidates_canonical_source_downstream_stages():
+    """Catches a default graph that omits a canonical source dependency."""
+    from scripts.gates import default_dependency_graph
+
+    assert default_dependency_graph().invalidate({"source"}) == {
+        "geometry_materials",
+        "antenna_system",
+        "simulation",
+        "processing",
+        "metrics",
+        "claims",
+    }
+
+
+def test_mark_stale_changes_only_affected_results_and_preserves_evidence():
+    """Catches stale propagation that loses evidence or rewrites unaffected results."""
+    from scripts.gates import mark_stale
+
+    report = {
+        "results": [
+            {
+                "gate_id": "source",
+                "state": "PASS",
+                "code": "PASS_SOURCE",
+                "summary": "source verified",
+                "evidence": ["evidence/source.json"],
+                "invalidates": ["processing"],
+            },
+            {
+                "gate_id": "claims",
+                "state": "PASS_WITH_LIMITATION",
+                "code": "LIMITED_CLAIM",
+                "summary": "claim conditional",
+                "evidence": ["evidence/claim.json"],
+                "invalidates": [],
+            },
+        ]
+    }
+
+    stale_report = mark_stale(report, {"claims"})
+
+    assert stale_report == {
+        "results": [
+            {
+                "gate_id": "source",
+                "state": "PASS",
+                "code": "PASS_SOURCE",
+                "summary": "source verified",
+                "evidence": ["evidence/source.json"],
+                "invalidates": ["processing"],
+            },
+            {
+                "gate_id": "claims",
+                "state": "STALE",
+                "code": "STALE_INVALIDATED",
+                "summary": "invalidated by upstream change",
+                "evidence": ["evidence/claim.json"],
+                "invalidates": [],
+            },
+        ]
+    }
+    assert report["results"][1]["state"] == "PASS_WITH_LIMITATION"
+
+
 def test_block_stops_remaining_gates(tmp_path: Path):
     """Catches a runner that executes gates after a BLOCK result."""
     calls = []

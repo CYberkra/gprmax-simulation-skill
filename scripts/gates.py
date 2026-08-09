@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Mapping
 
 from jsonschema import Draft202012Validator
 
@@ -24,6 +24,64 @@ class GateDefinition:
     gate_id: str
     fn: Callable[[GateContext], GateResult]
     depends_on: tuple[str, ...] = ()
+
+
+class DependencyGraph:
+    """Directed dependencies used to invalidate derived evidence."""
+
+    def __init__(self) -> None:
+        self._edges: dict[str, set[str]] = {}
+
+    def add(self, upstream: str, downstream: str) -> None:
+        self._edges.setdefault(upstream, set()).add(downstream)
+
+    def invalidate(self, changed: set[str]) -> set[str]:
+        affected: set[str] = set()
+        queue = list(sorted(changed))
+        while queue:
+            current = queue.pop(0)
+            for downstream in sorted(self._edges.get(current, ())):
+                if downstream not in affected and downstream not in changed:
+                    affected.add(downstream)
+                    queue.append(downstream)
+        return affected
+
+
+def default_dependency_graph() -> DependencyGraph:
+    """Build the canonical evidence-dependency chain for a simulation project."""
+    graph = DependencyGraph()
+    stages = (
+        "environment",
+        "numerics",
+        "source",
+        "geometry_materials",
+        "antenna_system",
+        "simulation",
+        "processing",
+        "metrics",
+        "claims",
+    )
+    for upstream, downstream in zip(stages, stages[1:]):
+        graph.add(upstream, downstream)
+    return graph
+
+
+def mark_stale(report: Mapping[str, object], affected: set[str]) -> dict[str, object]:
+    """Return a report with affected gate results marked stale without losing evidence."""
+    stale_report = dict(report)
+    results = report.get("results", ())
+    stale_results: list[object] = []
+    for result in results:
+        if isinstance(result, Mapping) and result.get("gate_id") in affected:
+            stale_result = dict(result)
+            stale_result["state"] = GateState.STALE.value
+            stale_result["code"] = "STALE_INVALIDATED"
+            stale_result["summary"] = "invalidated by upstream change"
+            stale_results.append(stale_result)
+        else:
+            stale_results.append(result)
+    stale_report["results"] = stale_results
+    return stale_report
 
 
 class GateRegistry:
