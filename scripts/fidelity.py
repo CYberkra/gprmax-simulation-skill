@@ -92,7 +92,12 @@ def can_promote(
         )
 
     if signoff:
-        if objective is None or claim_scope is None:
+        if (
+            objective is None
+            or not objective.strip()
+            or claim_scope is None
+            or not claim_scope.strip()
+        ):
             return PromotionDecision(
                 False,
                 "BLOCK_CLAIM_CONTEXT_MISSING",

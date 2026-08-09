@@ -97,11 +97,24 @@ def test_signoff_at_declared_claim_minimum_is_allowed():
     assert decision.code == "ALLOW_FIDELITY_PROMOTION"
 
 
-def test_signoff_requires_explicit_claim_context():
+@pytest.mark.parametrize(
+    ("objective", "claim_scope"),
+    [
+        (None, "physical"),
+        ("", "physical"),
+        ("   ", "physical"),
+        ("resolution", None),
+        ("resolution", ""),
+        ("resolution", "\t"),
+    ],
+)
+def test_signoff_requires_non_blank_claim_context(objective, claim_scope):
     decision = can_promote(
-        FidelityLevel.F4,
-        FidelityLevel.F5,
+        FidelityLevel.F1,
+        FidelityLevel.F1,
         [_result(GateState.PASS)],
+        objective=objective,
+        claim_scope=claim_scope,
         signoff=True,
     )
 
