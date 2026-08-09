@@ -7,6 +7,7 @@ import shutil
 from typing import Any
 
 import yaml
+from jsonschema import Draft202012Validator
 
 from scripts.contracts import ContractError, load_contract
 from scripts.core import GateContext, GateResult, GateState, write_json
@@ -47,16 +48,18 @@ def _preflight(contract_path: Path, project_root: Path) -> int:
     context = GateContext(project_root=project_root, contract=contract)
     try:
         results = run_stage(build_core_registry(), "preflight", context)
+        write_gate_report(report_path, results)
     except GateContractError as error:
-        results = [
+        sanitized = [
             GateResult(
-                gate_id=error.path,
+                gate_id="gate_engine",
                 state=GateState.BLOCK,
                 code=error.code,
                 summary=error.details,
             )
         ]
-    write_gate_report(report_path, results)
+        write_gate_report(report_path, sanitized)
+        return 2
     return 2 if any(result.state is GateState.BLOCK for result in results) else 0
 
 
@@ -69,29 +72,28 @@ def _read_json_object(path: Path) -> dict[str, Any]:
 
 def _read_gate_results(path: Path) -> tuple[GateResult, ...]:
     report = _read_json_object(path)
-    values = report.get("results")
-    if not isinstance(values, list):
-        raise ValueError(f"{path}: results must be a list")
+    schema_path = Path(__file__).resolve().parents[1] / "schemas" / "gate_status.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(report),
+        key=lambda error: list(error.path),
+    )
+    if errors:
+        error = errors[0]
+        location = ".".join(str(part) for part in error.path) or "<root>"
+        raise ValueError(f"{path}: {location}: {error.message}")
+
+    values = report["results"]
     results: list[GateResult] = []
     for value in values:
-        if not isinstance(value, dict):
-            raise ValueError(f"{path}: each result must be an object")
-        evidence = value.get("evidence", [])
-        invalidates = value.get("invalidates", [])
-        if not isinstance(evidence, list) or not all(isinstance(item, str) for item in evidence):
-            raise ValueError(f"{path}: evidence must be a list of strings")
-        if not isinstance(invalidates, list) or not all(
-            isinstance(item, str) for item in invalidates
-        ):
-            raise ValueError(f"{path}: invalidates must be a list of strings")
         results.append(
             GateResult(
-                gate_id=str(value["gate_id"]),
+                gate_id=value["gate_id"],
                 state=GateState(value["state"]),
-                code=str(value["code"]),
-                summary=str(value["summary"]),
-                evidence=tuple(evidence),
-                invalidates=tuple(invalidates),
+                code=value["code"],
+                summary=value["summary"],
+                evidence=tuple(value["evidence"]),
+                invalidates=tuple(value["invalidates"]),
             )
         )
     return tuple(results)

@@ -1,7 +1,10 @@
 from pathlib import Path
 import json
 
+import pytest
+
 import scripts.cli as cli
+from scripts.core import GateResult, GateState
 from scripts.gates import GateRegistry
 from scripts.cli import main
 
@@ -137,3 +140,102 @@ def test_preflight_malformed_gate_result_returns_blocking_exit(
     )["results"][0]
     assert result["state"] == "BLOCK"
     assert result["code"] == "BLOCK_GATE_RESULT_TYPE"
+
+
+def test_preflight_report_serialization_error_persists_sanitized_block(
+    tmp_path: Path, monkeypatch
+):
+    contract = tmp_path / "simulation_contract.yaml"
+    contract.write_text(
+        Path("templates/simulation_contract.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    registry = GateRegistry()
+    registry.register(
+        "preflight",
+        "environment",
+        lambda context: GateResult(
+            "environment",
+            GateState.PASS,
+            "PASS_ENVIRONMENT",
+            "environment ready",
+            evidence=(1,),
+        ),
+    )
+    monkeypatch.setattr(cli, "build_core_registry", lambda: registry)
+
+    rc = main(["preflight", str(contract), "--project-root", str(tmp_path)])
+
+    assert rc == 2
+    result = json.loads(
+        (tmp_path / "gates" / "preflight.json").read_text(encoding="utf-8")
+    )["results"][0]
+    assert result == {
+        "gate_id": "gate_engine",
+        "state": "BLOCK",
+        "code": "BLOCK_GATE_REPORT_SCHEMA",
+        "summary": result["summary"],
+        "evidence": [],
+        "invalidates": [],
+    }
+    assert isinstance(result["summary"], str) and result["summary"]
+
+
+@pytest.mark.parametrize(
+    "malformed_result",
+    [
+        {
+            "gate_id": 7,
+            "state": "PASS",
+            "code": "PASS_ENVIRONMENT",
+            "summary": "environment ready",
+            "evidence": [],
+            "invalidates": [],
+        },
+        {
+            "gate_id": "environment",
+            "state": "PASS",
+            "code": 7,
+            "summary": "environment ready",
+            "evidence": [],
+            "invalidates": [],
+        },
+        {
+            "gate_id": "environment",
+            "state": "PASS",
+            "code": "PASS_ENVIRONMENT",
+            "summary": "",
+            "evidence": [],
+            "invalidates": [],
+        },
+        {
+            "gate_id": "environment",
+            "state": "PASS",
+            "code": "PASS_ENVIRONMENT",
+            "summary": "environment ready",
+            "evidence": [],
+            "invalidates": [],
+            "unexpected": True,
+        },
+    ],
+    ids=["numeric-gate-id", "numeric-code", "empty-summary", "extra-property"],
+)
+def test_promote_rejects_malformed_stored_gate_report_without_changing_fidelity(
+    tmp_path: Path, malformed_result: dict[str, object]
+):
+    gates = tmp_path / "gates"
+    gates.mkdir()
+    (gates / "fidelity.json").write_text('{"current": "F0"}\n', encoding="utf-8")
+    (gates / "preflight.json").write_text(
+        json.dumps({"results": [malformed_result]}), encoding="utf-8"
+    )
+
+    rc = main(["promote", "F1", "--project-root", str(tmp_path)])
+
+    assert rc == 2
+    assert json.loads((gates / "fidelity.json").read_text(encoding="utf-8")) == {
+        "current": "F0"
+    }
+    assert json.loads((gates / "promotion.json").read_text(encoding="utf-8"))[
+        "code"
+    ] == "BLOCK_PROMOTION_STATE"
