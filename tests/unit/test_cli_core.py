@@ -9,6 +9,20 @@ from scripts.gates import GateRegistry
 from scripts.cli import main
 
 
+def test_minimal_fixture_preflight_succeeds():
+    rc = main(
+        [
+            "preflight",
+            "tests/fixtures/contracts/minimal_valid.yaml",
+            "--project-root",
+            "tests/fixtures/projects/minimal",
+        ]
+    )
+
+    assert rc == 0
+    assert Path("tests/fixtures/projects/minimal/gates/preflight.json").exists()
+
+
 def test_init_copies_generic_contract_template(tmp_path: Path):
     rc = main(["init", str(tmp_path)])
 

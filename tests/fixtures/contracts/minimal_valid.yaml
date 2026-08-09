@@ -1,0 +1,34 @@
+project: {}
+
+task:
+  objective: detection
+  claim_scope: numerical
+  project_data: {}
+
+medium:
+  model_type: nondispersive
+  parameter_source: assumed
+  project_data: {}
+
+waveform:
+  excitation_mode: pulse_broadband
+  measurement_mode: time_domain
+  project_data: {}
+
+numerics:
+  precision_requirement: auto
+  grid: auto
+  time: auto
+  pml: auto
+  project_data: null
+
+acceptance:
+  negative_controls: []
+  sensitivity_tests: []
+  thresholds: {}
+  project_data: {}
+
+evidence:
+  required_outputs: []
+  provenance_level: strict
+  project_data: null
