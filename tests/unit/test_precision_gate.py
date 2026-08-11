@@ -179,6 +179,41 @@ def _adequacy_evidence(
     }
 
 
+def _refresh_manifest_input_inventory(project_root: Path) -> None:
+    """Rebind both matched-run manifests to the current complete input tree."""
+    input_hashes = {
+        path.relative_to(project_root).as_posix(): _file_sha256(path)
+        for path in sorted((project_root / "inputs").rglob("*"))
+        if path.is_file()
+    }
+    for run_id in ("run-fp32", "run-fp64"):
+        path = project_root / "manifests" / f"{run_id}.json"
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest["inputs"] = input_hashes
+        manifest["inputs_sha256"] = _canonical_hash_map_sha256(input_hashes)
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def _write_static_deck(
+    project_root: Path,
+    primary: str,
+    *,
+    extra_files: dict[str, str | bytes] | None = None,
+) -> None:
+    """Install a UTF-8-BOM deck fixture and refresh its manifest inventory."""
+    (project_root / "inputs" / "model.in").write_text(
+        primary, encoding="utf-8-sig"
+    )
+    for relative_ref, payload in (extra_files or {}).items():
+        path = project_root / relative_ref
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(payload, bytes):
+            path.write_bytes(payload)
+        else:
+            path.write_text(payload, encoding="utf-8-sig")
+    _refresh_manifest_input_inventory(project_root)
+
+
 def _context(
     tmp_path: Path,
     *,
@@ -544,6 +579,219 @@ def test_passing_fp32_comparison_fixture_allows_risk_flag_exception(tmp_path: Pa
         "environment.real_dtype",
         "environment.complex_dtype",
     ]
+
+
+def test_fp32_exception_publishes_verified_recursive_static_dependency_closure(
+    tmp_path: Path,
+):
+    """Catches inventory-only evidence that never binds files named by the deck."""
+    candidate = np.array([1.0, 1.000001], dtype=np.float32)
+    reference = np.array([1.0, 1.0000011], dtype=np.float64)
+    _write_dataset(tmp_path / "adequacy.h5", "/candidate", candidate)
+    with h5py.File(tmp_path / "adequacy.h5", "a") as handle:
+        handle.create_dataset("reference", data=reference)
+    evidence = _adequacy_evidence(tmp_path, candidate, reference)
+    _write_static_deck(
+        tmp_path,
+        """## UTF-8 BOM and comments are permitted
+#domain: 1 1 1
+#include_file: inputs/nested.in
+#geometry_objects_read: 0 0 0 inputs/geometry.h5 inputs/materials.txt
+#excitation_file: inputs/excitation.txt
+""",
+        extra_files={
+            "inputs/nested.in": "#include_file: inputs/deeper.in\n",
+            "inputs/deeper.in": "#material: 4 0 1 0 nested\n",
+            "inputs/geometry.h5": b"geometry-hdf5-placeholder",
+            "inputs/materials.txt": "#material: 5 0 1 0 imported\n",
+            "inputs/excitation.txt": "0 1\n1 0\n",
+        },
+    )
+    ctx = _context(
+        tmp_path,
+        values=candidate,
+        numerics={
+            "precision_requirement": "float32",
+            "risk_flags": ["fine_delay_fit"],
+            "fp32_adequacy_evidence": evidence,
+        },
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.PASS
+    matched_run = ctx.artifacts["derived"]["precision"]["fp32_adequacy"][
+        "matched_run"
+    ]
+    assert matched_run.get("dependency_count") == 6
+    assert matched_run.get("dependencies") == [
+        "inputs/deeper.in",
+        "inputs/excitation.txt",
+        "inputs/geometry.h5",
+        "inputs/materials.txt",
+        "inputs/model.in",
+        "inputs/nested.in",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("directive", "outside_ref"),
+    [
+        ("#include_file: outside-input-root.in", "outside-input-root.in"),
+        ("#include_file: ../outside-include.in", "../outside-include.in"),
+        (
+            "#geometry_objects_read: 0 0 0 ../outside-geometry.h5 inputs/materials.txt",
+            "../outside-geometry.h5",
+        ),
+        (
+            "#geometry_objects_read: 0 0 0 inputs/geometry.h5 ../outside-materials.txt",
+            "../outside-materials.txt",
+        ),
+        (
+            "#excitation_file: ../outside-excitation.txt",
+            "../outside-excitation.txt",
+        ),
+    ],
+    ids=[
+        "include-outside-input-root",
+        "include-parent-traversal",
+        "geometry-parent-traversal",
+        "materials-parent-traversal",
+        "excitation-parent-traversal",
+    ],
+)
+def test_fp32_exception_blocks_dependency_outside_input_root(
+    tmp_path: Path, directive: str, outside_ref: str
+):
+    """Catches external file references hidden behind a complete input inventory."""
+    candidate = np.array([1.0], dtype=np.float32)
+    reference = np.array([1.0], dtype=np.float64)
+    _write_dataset(tmp_path / "adequacy.h5", "/candidate", candidate)
+    with h5py.File(tmp_path / "adequacy.h5", "a") as handle:
+        handle.create_dataset("reference", data=reference)
+    evidence = _adequacy_evidence(tmp_path, candidate, reference)
+    _write_static_deck(
+        tmp_path,
+        f"#domain: 1 1 1\n{directive}\n",
+        extra_files={
+            "inputs/geometry.h5": b"geometry-hdf5-placeholder",
+            "inputs/materials.txt": "#material: 5 0 1 0 imported\n",
+        },
+    )
+    (tmp_path / outside_ref).write_bytes(b"external dependency")
+    ctx = _context(
+        tmp_path,
+        values=candidate,
+        numerics={
+            "precision_requirement": "float32",
+            "risk_flags": ["weak_differential"],
+            "fp32_adequacy_evidence": evidence,
+        },
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
+
+
+@pytest.mark.parametrize(
+    ("primary", "extra_files"),
+    [
+        ("#include_file: inputs/nested.in inputs/deeper.in\n", {}),
+        ("#geometry_objects_read: 0 0 inputs/geometry.h5 inputs/materials.txt\n", {}),
+        ("#excitation_file: inputs/excitation.txt 1\n", {}),
+        ("#python:\nprint('dynamic')\n#end_python:\n", {}),
+        ("#end_python:\n", {}),
+        ("#future_load_asset: inputs/future.bin\n", {}),
+        (
+            "#include_file: inputs/nested.in\n",
+            {"inputs/nested.in": "#include_file: inputs/model.in\n"},
+        ),
+        (
+            "#include_file: inputs/nested.in\n#include_file: inputs/nested.in\n",
+            {"inputs/nested.in": "#domain: 1 1 1\n"},
+        ),
+    ],
+    ids=[
+        "include-arity",
+        "geometry-arity",
+        "excitation-arity",
+        "python-block",
+        "orphan-end-python",
+        "unknown-command",
+        "include-cycle",
+        "duplicate-include",
+    ],
+)
+def test_fp32_exception_requires_closed_legacy_static_deck_profile(
+    tmp_path: Path,
+    primary: str,
+    extra_files: dict[str, str | bytes],
+):
+    """Catches dynamic, unknown, malformed, cyclic, or duplicate deck closure."""
+    candidate = np.array([1.0], dtype=np.float32)
+    reference = np.array([1.0], dtype=np.float64)
+    _write_dataset(tmp_path / "adequacy.h5", "/candidate", candidate)
+    with h5py.File(tmp_path / "adequacy.h5", "a") as handle:
+        handle.create_dataset("reference", data=reference)
+    evidence = _adequacy_evidence(tmp_path, candidate, reference)
+    _write_static_deck(tmp_path, primary, extra_files=extra_files)
+    ctx = _context(
+        tmp_path,
+        values=candidate,
+        numerics={
+            "precision_requirement": "float32",
+            "risk_flags": ["coherent_phase"],
+            "fp32_adequacy_evidence": evidence,
+        },
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["candidate_manifest", "outputs.hdf5", "outputs.receiver_dataset"],
+)
+def test_fp32_exception_path_bindings_require_exact_canonical_text(
+    tmp_path: Path, field: str
+):
+    """Catches whitespace-normalized paths authorizing different evidence text."""
+    candidate = np.array([1.0], dtype=np.float32)
+    reference = np.array([1.0], dtype=np.float64)
+    _write_dataset(tmp_path / "adequacy.h5", "/candidate", candidate)
+    with h5py.File(tmp_path / "adequacy.h5", "a") as handle:
+        handle.create_dataset("reference", data=reference)
+    evidence = _adequacy_evidence(tmp_path, candidate, reference)
+    if field == "candidate_manifest":
+        evidence["matched_run"][field] = " manifests/run-fp32.json "
+    else:
+        output_field = field.removeprefix("outputs.")
+        for run_id in ("run-fp32", "run-fp64"):
+            path = tmp_path / "manifests" / f"{run_id}.json"
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            manifest["outputs"][output_field] = (
+                f" {manifest['outputs'][output_field]} "
+            )
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+    ctx = _context(
+        tmp_path,
+        values=candidate,
+        numerics={
+            "precision_requirement": "float32",
+            "risk_flags": ["long_distance"],
+            "fp32_adequacy_evidence": evidence,
+        },
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
 
 
 def test_fp32_candidate_must_exactly_equal_audited_receiver(tmp_path: Path):

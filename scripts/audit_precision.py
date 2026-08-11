@@ -44,6 +44,55 @@ _RUN_MANIFEST_PRECISION_DTYPES = {
     "float64": ("float64", "complex128"),
 }
 _RUN_VARIANT_OUTPUT_FIELDS = frozenset({"hdf5", "receiver_dataset_sha256"})
+_LEGACY_STATIC_DECK_COMMANDS = frozenset(
+    {
+        "domain",
+        "dx_dy_dz",
+        "time_window",
+        "title",
+        "messages",
+        "num_threads",
+        "time_step_stability_factor",
+        "pml_formulation",
+        "pml_cells",
+        "excitation_file",
+        "src_steps",
+        "rx_steps",
+        "taguchi",
+        "end_taguchi",
+        "output_dir",
+        "geometry_view",
+        "geometry_objects_write",
+        "material",
+        "soil_peplinski",
+        "add_dispersion_debye",
+        "add_dispersion_lorentz",
+        "add_dispersion_drude",
+        "waveform",
+        "voltage_source",
+        "hertzian_dipole",
+        "magnetic_dipole",
+        "transmission_line",
+        "rx",
+        "rx_array",
+        "snapshot",
+        "pml_cfs",
+        "include_file",
+        "geometry_objects_read",
+        "edge",
+        "plate",
+        "triangle",
+        "box",
+        "sphere",
+        "cylinder",
+        "cylindrical_sector",
+        "fractal_box",
+        "add_surface_roughness",
+        "add_surface_water",
+        "add_grass",
+    }
+)
+_DYNAMIC_DECK_COMMANDS = frozenset({"python", "end_python"})
 
 # This is an algorithm-local rounding margin: a median residual at or below
 # eight representable steps is too close to the storage dtype's quantization
@@ -463,6 +512,8 @@ def _audit_fp32_adequacy(
                 "reference_manifest": matched_run["reference_manifest"],
                 "input_root": matched_run["input_root"],
                 "primary_input": matched_run["primary_input"],
+                "dependencies": list(matched_run["dependencies"]),
+                "dependency_count": matched_run["dependency_count"],
                 "inputs_sha256": matched_run["inputs_sha256"],
                 "candidate_precision": "float32",
                 "reference_precision": "float64",
@@ -484,7 +535,7 @@ def _matched_run_manifests(
     evidence: Mapping[str, Any],
     candidate_dataset_sha256: str,
     reference_dataset_sha256: str,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     code = "BLOCK_FP32_ADEQUACY_EVIDENCE"
     matched = _mapping(
         evidence.get("matched_run"),
@@ -497,12 +548,20 @@ def _matched_run_manifests(
             code,
             "matched_run must contain only candidate_manifest and reference_manifest",
         )
-    candidate_ref = _required_text(
-        matched, "candidate_manifest", "matched_run.candidate_manifest", code
-    ).strip()
-    reference_ref = _required_text(
-        matched, "reference_manifest", "matched_run.reference_manifest", code
-    ).strip()
+    candidate_ref = _canonical_project_relative_posix_path(
+        _required_text(
+            matched, "candidate_manifest", "matched_run.candidate_manifest", code
+        ),
+        "matched_run.candidate_manifest",
+        code,
+    )
+    reference_ref = _canonical_project_relative_posix_path(
+        _required_text(
+            matched, "reference_manifest", "matched_run.reference_manifest", code
+        ),
+        "matched_run.reference_manifest",
+        code,
+    )
     candidate_path = _resolve_project_regular_file(ctx.project_root, candidate_ref, code)
     reference_path = _resolve_project_regular_file(ctx.project_root, reference_ref, code)
     if candidate_path == reference_path:
@@ -549,6 +608,10 @@ def _matched_run_manifests(
         raise _PrecisionAuditError(code, "matched-run canonical input hash maps must be identical")
     if candidate["inputs_sha256"] != reference["inputs_sha256"]:
         raise _PrecisionAuditError(code, "matched-run canonical input-set hashes must be identical")
+    if candidate["dependencies"] != reference["dependencies"]:
+        raise _PrecisionAuditError(
+            code, "matched-run static dependency closures must be identical"
+        )
     if not _strict_json_equal(
         candidate["nonprecision_numerics"], reference["nonprecision_numerics"]
     ):
@@ -578,6 +641,8 @@ def _matched_run_manifests(
         "reference_manifest": reference_ref,
         "input_root": candidate["input_root"],
         "primary_input": candidate["primary_input"],
+        "dependencies": candidate["dependencies"],
+        "dependency_count": len(candidate["dependencies"]),
         "inputs_sha256": candidate["inputs_sha256"],
     }
 
@@ -666,15 +731,30 @@ def _validated_run_manifest(
         raise _PrecisionAuditError(
             code, "run manifest canonical input-set SHA-256 does not match its input map"
         )
+    dependencies = _audit_static_dependency_closure(
+        ctx.project_root,
+        input_root,
+        primary_input,
+        inputs,
+        code,
+    )
 
     outputs = _mapping(manifest.get("outputs"), "run manifest outputs", code)
-    hdf5_ref = _required_text(outputs, "hdf5", "run manifest outputs.hdf5", code).strip()
+    hdf5_ref = _canonical_project_relative_posix_path(
+        _required_text(outputs, "hdf5", "run manifest outputs.hdf5", code),
+        "run manifest outputs.hdf5",
+        code,
+    )
     dataset_ref = _required_text(
         outputs,
         "receiver_dataset",
         "run manifest outputs.receiver_dataset",
         code,
-    ).strip()
+    )
+    if dataset_ref != dataset_ref.strip():
+        raise _PrecisionAuditError(
+            code, "run manifest outputs.receiver_dataset must be exact text"
+        )
     declared_dataset_hash = _required_sha256(
         outputs,
         "receiver_dataset_sha256",
@@ -710,6 +790,7 @@ def _validated_run_manifest(
         "primary_input": primary_input,
         "inputs": inputs,
         "inputs_sha256": inputs_sha256,
+        "dependencies": dependencies,
         "nonprecision_numerics": nonprecision_numerics,
         "nonprecision_environment": nonprecision_environment,
         "command": command,
@@ -792,6 +873,121 @@ def _validated_manifest_inputs(
             "run manifest inputs must exactly match the complete input_root inventory",
         )
     return actual
+
+
+def _audit_static_dependency_closure(
+    project_root: Path,
+    input_root: str,
+    primary_input: str,
+    inventory: Mapping[str, str],
+    code: str,
+) -> tuple[str, ...]:
+    """Prove file closure for the supported legacy static gprMax deck profile.
+
+    The solver historically tries the process working directory before the input
+    directory for file commands. FP32 exception evidence deliberately removes
+    that ambiguity: every dependency token must be an exact, canonical,
+    project-root-relative POSIX path beneath ``input_root``.
+    """
+    root_parts = PurePosixPath(input_root).parts
+    dependencies: set[str] = {primary_input}
+    active_includes: list[str] = []
+
+    def bind_dependency(token: str, label: str) -> tuple[str, Path]:
+        canonical_ref = _canonical_project_relative_posix_path(token, label, code)
+        parts = PurePosixPath(canonical_ref).parts
+        if len(parts) <= len(root_parts) or parts[: len(root_parts)] != root_parts:
+            raise _PrecisionAuditError(
+                code, f"{label} must remain within run manifest input_root"
+            )
+        declared_hash = inventory.get(canonical_ref)
+        if declared_hash is None:
+            raise _PrecisionAuditError(
+                code, f"{label} must be present in the verified input_root inventory"
+            )
+        path = _resolve_project_regular_file(project_root, canonical_ref, code)
+        if _file_sha256(path, code) != declared_hash:
+            raise _PrecisionAuditError(
+                code, f"{label} changed after input_root inventory verification"
+            )
+        return canonical_ref, path
+
+    def add_dependency(token: str, label: str, *, include: bool = False) -> None:
+        canonical_ref, path = bind_dependency(token, label)
+        if canonical_ref in active_includes:
+            raise _PrecisionAuditError(code, "static deck include cycle detected")
+        if canonical_ref in dependencies:
+            raise _PrecisionAuditError(code, "static deck dependency is referenced twice")
+        dependencies.add(canonical_ref)
+        if include:
+            visit_deck(canonical_ref, path)
+
+    def visit_deck(deck_ref: str, path: Path) -> None:
+        active_includes.append(deck_ref)
+        try:
+            with _open_verified_binary_file(path, code, "static gprMax input deck") as handle:
+                payload = handle.read()
+            if hashlib.sha256(payload).hexdigest() != inventory[deck_ref]:
+                raise _PrecisionAuditError(
+                    code, "static gprMax input deck changed after inventory verification"
+                )
+            try:
+                text = payload.decode("utf-8-sig")
+            except UnicodeDecodeError as error:
+                raise _PrecisionAuditError(
+                    code, "static gprMax input deck must be UTF-8 or UTF-8 with BOM"
+                ) from error
+
+            for line_number, raw_line in enumerate(text.splitlines(), start=1):
+                line = raw_line.strip()
+                if not line or line.startswith("##") or not line.startswith("#"):
+                    continue
+                command_token, separator, arguments = line.partition(":")
+                command = command_token[1:]
+                if not separator or not command:
+                    raise _PrecisionAuditError(
+                        code,
+                        f"malformed static deck command at {deck_ref}:{line_number}",
+                    )
+                if command in _DYNAMIC_DECK_COMMANDS:
+                    raise _PrecisionAuditError(
+                        code, "dynamic Python deck commands cannot prove static file closure"
+                    )
+                if command not in _LEGACY_STATIC_DECK_COMMANDS:
+                    raise _PrecisionAuditError(
+                        code,
+                        f"unsupported command #{command}: cannot prove static file closure",
+                    )
+
+                tokens = arguments.split()
+                location = f"{deck_ref}:{line_number} #{command}"
+                if command == "include_file":
+                    if len(tokens) != 1:
+                        raise _PrecisionAuditError(
+                            code, "#include_file requires exactly one file token"
+                        )
+                    add_dependency(tokens[0], location, include=True)
+                elif command == "geometry_objects_read":
+                    if len(tokens) != 5:
+                        raise _PrecisionAuditError(
+                            code, "#geometry_objects_read requires exactly five parameters"
+                        )
+                    add_dependency(tokens[3], f"{location} geometry file")
+                    add_dependency(tokens[4], f"{location} materials file")
+                elif command == "excitation_file":
+                    if len(tokens) not in {1, 3}:
+                        raise _PrecisionAuditError(
+                            code, "#excitation_file requires exactly one or three parameters"
+                        )
+                    add_dependency(tokens[0], f"{location} excitation file")
+        finally:
+            active_includes.pop()
+
+    primary_ref, primary_path = bind_dependency(
+        primary_input, "run manifest primary_input"
+    )
+    visit_deck(primary_ref, primary_path)
+    return tuple(sorted(dependencies))
 
 
 def _canonical_project_relative_posix_path(
