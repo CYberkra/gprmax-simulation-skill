@@ -130,6 +130,8 @@ def test_run_manifest_schema_rejects_whitespace_required_environment_identity(fi
     schema = json.loads(Path("schemas/run_manifest.schema.json").read_text(encoding="utf-8"))
     manifest = {
         "run_id": "run-1",
+        "input_root": "inputs",
+        "primary_input": "inputs/model.in",
         "environment": {
             "gprmax_version": "3.1.7",
             "banner": "gprMax 3.1.7",
@@ -138,10 +140,15 @@ def test_run_manifest_schema_rejects_whitespace_required_environment_identity(fi
             "real_dtype": "float64",
             "complex_dtype": "complex128",
         },
-        "command": ["python", "-m", "gprMax"],
-        "inputs": {},
+        "command": ["python", "-m", "gprMax", "inputs/model.in"],
+        "inputs": {"inputs/model.in": "a" * 64},
+        "inputs_sha256": "b" * 64,
         "numerics": {},
-        "outputs": {},
+        "outputs": {
+            "hdf5": "runs/run-1.h5",
+            "receiver_dataset": "/rxs/rx1/Ez",
+            "receiver_dataset_sha256": "c" * 64,
+        },
         "started_at": "2026-08-09T00:00:00Z",
         "finished_at": "2026-08-09T00:00:01Z",
         "return_code": 0,

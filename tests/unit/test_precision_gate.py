@@ -1,11 +1,14 @@
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import h5py
+from jsonschema import Draft202012Validator
 import numpy as np
 import pytest
 
+import scripts.audit_precision as precision_module
 from scripts.audit_precision import audit_precision, local_ulp, precision_floor_ratio
 from scripts.core import GateContext, GateState
 
@@ -107,6 +110,8 @@ def _adequacy_evidence(
     _write_dataset(runs / "run-fp64.h5", "/rxs/rx1/Ez", reference)
     candidate_manifest = {
         "run_id": "run-fp32",
+        "input_root": "inputs",
+        "primary_input": "inputs/model.in",
         "environment": {
             "gprmax_version": "4.0.0",
             "banner": "gprMax 4.0.0",
@@ -131,6 +136,8 @@ def _adequacy_evidence(
     }
     reference_manifest = {
         "run_id": "run-fp64",
+        "input_root": "inputs",
+        "primary_input": "inputs/model.in",
         "environment": {
             "gprmax_version": "4.0.0",
             "banner": "gprMax 4.0.0",
@@ -529,7 +536,10 @@ def test_passing_fp32_comparison_fixture_allows_risk_flag_exception(tmp_path: Pa
     assert result.evidence == ("run.h5", "adequacy.h5")
     adequacy = ctx.artifacts["derived"]["precision"]["fp32_adequacy"]
     assert adequacy["passed"] is True
-    assert adequacy["matched_run"]["derived_change_projection"] == [
+    matched_run = adequacy["matched_run"]
+    assert matched_run.get("input_root") == "inputs"
+    assert matched_run.get("primary_input") == "inputs/model.in"
+    assert matched_run["derived_change_projection"] == [
         "numerics.precision",
         "environment.real_dtype",
         "environment.complex_dtype",
@@ -764,6 +774,127 @@ def test_manifest_input_hashes_are_recomputed_from_actual_project_files(tmp_path
     assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_primary",
+        "missing_dependency",
+        "alias_path",
+        "absolute_path",
+        "duplicate_file_identity",
+        "primary_absent_from_command",
+    ],
+)
+def test_manifest_inputs_are_a_closed_canonical_command_bound_inventory(
+    tmp_path: Path, mutation: str
+):
+    """Catches a partial, aliased, duplicate, or command-unbound input inventory."""
+    candidate = np.array([1.0], dtype=np.float32)
+    reference = np.array([1.0], dtype=np.float64)
+    with h5py.File(tmp_path / "adequacy.h5", "w") as handle:
+        handle.create_dataset("candidate", data=candidate)
+        handle.create_dataset("reference", data=reference)
+    evidence = _adequacy_evidence(tmp_path, candidate, reference)
+    manifest_paths = [
+        tmp_path / "manifests" / "run-fp32.json",
+        tmp_path / "manifests" / "run-fp64.json",
+    ]
+    manifests = [json.loads(path.read_text(encoding="utf-8")) for path in manifest_paths]
+
+    if mutation == "duplicate_file_identity":
+        os.link(
+            tmp_path / "inputs" / "model.in",
+            tmp_path / "inputs" / "model-copy.in",
+        )
+    for manifest in manifests:
+        inputs = manifest["inputs"]
+        if mutation == "missing_primary":
+            inputs.pop("inputs/model.in")
+        elif mutation == "missing_dependency":
+            inputs.pop("inputs/geometry.bin")
+        elif mutation == "alias_path":
+            inputs["inputs/./model.in"] = inputs.pop("inputs/model.in")
+        elif mutation == "absolute_path":
+            inputs[(tmp_path / "inputs" / "model.in").resolve().as_posix()] = inputs.pop(
+                "inputs/model.in"
+            )
+        elif mutation == "duplicate_file_identity":
+            inputs["inputs/model-copy.in"] = _file_sha256(
+                tmp_path / "inputs" / "model-copy.in"
+            )
+        elif mutation == "primary_absent_from_command":
+            manifest["command"] = ["python", "-m", "gprMax", "inputs/geometry.bin"]
+        manifest["inputs_sha256"] = _canonical_hash_map_sha256(inputs)
+
+    for path, manifest in zip(manifest_paths, manifests, strict=True):
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+    ctx = _context(
+        tmp_path,
+        values=candidate,
+        numerics={
+            "precision_requirement": "float32",
+            "risk_flags": ["weak_differential"],
+            "fp32_adequacy_evidence": evidence,
+        },
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
+
+
+@pytest.mark.parametrize("field", ["input_root", "primary_input"])
+def test_run_manifest_schema_requires_closed_input_boundary(
+    tmp_path: Path, field: str
+):
+    """Catches a formal run manifest schema that leaves input closure optional."""
+    candidate = np.array([1.0], dtype=np.float32)
+    reference = np.array([1.0], dtype=np.float64)
+    _adequacy_evidence(tmp_path, candidate, reference)
+    manifest = json.loads(
+        (tmp_path / "manifests" / "run-fp32.json").read_text(encoding="utf-8")
+    )
+    manifest.pop(field)
+    schema = json.loads(
+        Path("schemas/run_manifest.schema.json").read_text(encoding="utf-8")
+    )
+
+    errors = list(Draft202012Validator(schema).iter_errors(manifest))
+
+    assert any(error.validator == "required" and field in error.message for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("container", "field"),
+    [
+        ("manifest", "inputs_sha256"),
+        ("outputs", "hdf5"),
+        ("outputs", "receiver_dataset"),
+        ("outputs", "receiver_dataset_sha256"),
+    ],
+)
+def test_run_manifest_schema_requires_precision_evidence_bindings(
+    tmp_path: Path, container: str, field: str
+):
+    """Catches schema-valid manifests that this precision gate must reject."""
+    candidate = np.array([1.0], dtype=np.float32)
+    reference = np.array([1.0], dtype=np.float64)
+    _adequacy_evidence(tmp_path, candidate, reference)
+    manifest = json.loads(
+        (tmp_path / "manifests" / "run-fp32.json").read_text(encoding="utf-8")
+    )
+    target = manifest if container == "manifest" else manifest["outputs"]
+    target.pop(field)
+    schema = json.loads(
+        Path("schemas/run_manifest.schema.json").read_text(encoding="utf-8")
+    )
+
+    errors = list(Draft202012Validator(schema).iter_errors(manifest))
+
+    assert any(error.validator == "required" and field in error.message for error in errors)
+
+
 def test_manifest_output_hash_is_recomputed_from_actual_run_dataset(tmp_path: Path):
     """Catches a reference run output changed after its manifest was recorded."""
     candidate = np.array([1.0], dtype=np.float32)
@@ -788,6 +919,108 @@ def test_manifest_output_hash_is_recomputed_from_actual_run_dataset(tmp_path: Pa
 
     assert result.state is GateState.BLOCK
     assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
+
+
+@pytest.mark.parametrize(
+    ("field", "candidate_value", "reference_value"),
+    [
+        ("receiver_position_m", None, [0.0, 0.0, 1.0]),
+        ("source_delay_s", None, 1e-9),
+        ("sample_count", 1, True),
+    ],
+)
+def test_matched_run_outputs_block_unprojected_key_or_json_type_changes(
+    tmp_path: Path,
+    field: str,
+    candidate_value: object,
+    reference_value: object,
+):
+    """Catches treating the entire outputs object as run-variant evidence."""
+    candidate = np.array([1.0], dtype=np.float32)
+    reference = np.array([1.0], dtype=np.float64)
+    with h5py.File(tmp_path / "adequacy.h5", "w") as handle:
+        handle.create_dataset("candidate", data=candidate)
+        handle.create_dataset("reference", data=reference)
+    evidence = _adequacy_evidence(tmp_path, candidate, reference)
+    candidate_path = tmp_path / "manifests" / "run-fp32.json"
+    reference_path = tmp_path / "manifests" / "run-fp64.json"
+    candidate_manifest = json.loads(candidate_path.read_text(encoding="utf-8"))
+    reference_manifest = json.loads(reference_path.read_text(encoding="utf-8"))
+    if candidate_value is not None:
+        candidate_manifest["outputs"][field] = candidate_value
+    reference_manifest["outputs"][field] = reference_value
+    candidate_path.write_text(json.dumps(candidate_manifest), encoding="utf-8")
+    reference_path.write_text(json.dumps(reference_manifest), encoding="utf-8")
+    ctx = _context(
+        tmp_path,
+        values=candidate,
+        numerics={
+            "precision_requirement": "float32",
+            "risk_flags": ["coherent_phase"],
+            "fp32_adequacy_evidence": evidence,
+        },
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
+
+
+@pytest.mark.parametrize(
+    ("target_name", "expected_code"),
+    [
+        ("run.h5", "BLOCK_OUTPUT_EVIDENCE"),
+        ("adequacy.h5", "BLOCK_FP32_ADEQUACY_EVIDENCE"),
+        ("run-fp32.json", "BLOCK_FP32_ADEQUACY_EVIDENCE"),
+        ("model.in", "BLOCK_FP32_ADEQUACY_EVIDENCE"),
+        ("run-fp64.h5", "BLOCK_FP32_ADEQUACY_EVIDENCE"),
+    ],
+)
+def test_verified_open_blocks_file_identity_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target_name: str,
+    expected_code: str,
+):
+    """Catches path replacement or in-place mutation across a verified evidence read."""
+    candidate = np.array([1.0], dtype=np.float32)
+    reference = np.array([1.0], dtype=np.float64)
+    with h5py.File(tmp_path / "adequacy.h5", "w") as handle:
+        handle.create_dataset("candidate", data=candidate)
+        handle.create_dataset("reference", data=reference)
+    evidence = _adequacy_evidence(tmp_path, candidate, reference)
+    ctx = _context(
+        tmp_path,
+        values=candidate,
+        numerics={
+            "precision_requirement": "float32",
+            "risk_flags": ["weak_differential"],
+            "fp32_adequacy_evidence": evidence,
+        },
+    )
+    real_check = getattr(
+        precision_module,
+        "_file_identity_unchanged",
+        lambda _path, _snapshots: True,
+    )
+
+    def injected_change(path: Path, snapshots: object) -> bool:
+        if path.name == target_name:
+            return False
+        return real_check(path, snapshots)
+
+    monkeypatch.setattr(
+        precision_module,
+        "_file_identity_unchanged",
+        injected_change,
+        raising=False,
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == expected_code
 
 
 def test_overflowing_per_sample_tolerance_blocks_as_malformed_evidence(tmp_path: Path):

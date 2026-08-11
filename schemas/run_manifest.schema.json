@@ -4,9 +4,12 @@
   "type": "object",
   "required": [
     "run_id",
+    "input_root",
+    "primary_input",
     "environment",
     "command",
     "inputs",
+    "inputs_sha256",
     "numerics",
     "outputs",
     "started_at",
@@ -15,17 +18,43 @@
   ],
   "properties": {
     "run_id": {"type": "string", "minLength": 1},
+    "input_root": {"$ref": "#/$defs/projectRelativePosixPath"},
+    "primary_input": {"$ref": "#/$defs/projectRelativePosixPath"},
     "environment": {"$ref": "#/$defs/environment"},
     "command": {"type": "array", "items": {"type": "string"}},
-    "inputs": {"type": "object", "additionalProperties": true},
+    "inputs": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"$ref": "#/$defs/projectRelativePosixPath"},
+      "additionalProperties": {"$ref": "#/$defs/sha256"}
+    },
+    "inputs_sha256": {"$ref": "#/$defs/sha256"},
     "numerics": {"type": "object", "additionalProperties": true},
-    "outputs": {"type": "object", "additionalProperties": true},
+    "outputs": {
+      "type": "object",
+      "required": ["hdf5", "receiver_dataset", "receiver_dataset_sha256"],
+      "properties": {
+        "hdf5": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "receiver_dataset": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "receiver_dataset_sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": true
+    },
     "started_at": {"type": "string", "minLength": 1},
     "finished_at": {"type": "string", "minLength": 1},
     "return_code": {"type": "integer"}
   },
   "additionalProperties": true,
   "$defs": {
+    "projectRelativePosixPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*//)(?!.*\\s)[^/]+(?:/[^/]+)*$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9A-Fa-f]{64}$"
+    },
     "environment": {
       "type": "object",
       "required": [

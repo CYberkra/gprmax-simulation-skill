@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 import hashlib
 from itertools import product
 import json
 import math
 from numbers import Real
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import stat
 from typing import Any
 
@@ -42,6 +43,7 @@ _RUN_MANIFEST_PRECISION_DTYPES = {
     "float32": ("float32", "complex64"),
     "float64": ("float64", "complex128"),
 }
+_RUN_VARIANT_OUTPUT_FIELDS = frozenset({"hdf5", "receiver_dataset_sha256"})
 
 # This is an algorithm-local rounding margin: a median residual at or below
 # eight representable steps is too close to the storage dtype's quantization
@@ -284,9 +286,13 @@ def _inspect_output(ctx: GateContext) -> dict[str, Any]:
     dataset_ref = _required_text(
         outputs, "receiver_dataset", "outputs.receiver_dataset", "BLOCK_OUTPUT_EVIDENCE"
     )
-    path = _resolve_project_file(ctx.project_root, path_ref, "BLOCK_OUTPUT_EVIDENCE")
+    path = _resolve_project_regular_file(
+        ctx.project_root, path_ref.strip(), "BLOCK_OUTPUT_EVIDENCE"
+    )
     try:
-        with h5py.File(path, "r") as handle:
+        with _open_verified_hdf5(
+            path, "BLOCK_OUTPUT_EVIDENCE", "receiver HDF5 output"
+        ) as handle:
             dataset = _local_nonvirtual_dataset(
                 handle, dataset_ref, "BLOCK_OUTPUT_EVIDENCE", "receiver dataset"
             )
@@ -377,8 +383,10 @@ def _audit_fp32_adequacy(
     atol = _nonnegative_finite(
         evidence.get("atol"), "fp32 adequacy atol", "BLOCK_FP32_ADEQUACY_EVIDENCE"
     )
-    fixture_path = _resolve_project_file(
-        ctx.project_root, fixture_ref, "BLOCK_FP32_ADEQUACY_EVIDENCE"
+    fixture_path = _resolve_project_regular_file(
+        ctx.project_root,
+        fixture_ref.strip(),
+        "BLOCK_FP32_ADEQUACY_EVIDENCE",
     )
     if fixture_path == output["resolved"]:
         raise _PrecisionAuditError(
@@ -386,7 +394,11 @@ def _audit_fp32_adequacy(
             "FP32 adequacy comparison fixture must be independent of the audited output",
         )
     try:
-        with h5py.File(fixture_path, "r") as handle:
+        with _open_verified_hdf5(
+            fixture_path,
+            "BLOCK_FP32_ADEQUACY_EVIDENCE",
+            "FP32 adequacy fixture",
+        ) as handle:
             candidate_dataset = _local_nonvirtual_dataset(
                 handle,
                 candidate_ref,
@@ -449,6 +461,8 @@ def _audit_fp32_adequacy(
                 "reference_run_id": matched_run["reference_run_id"],
                 "candidate_manifest": matched_run["candidate_manifest"],
                 "reference_manifest": matched_run["reference_manifest"],
+                "input_root": matched_run["input_root"],
+                "primary_input": matched_run["primary_input"],
                 "inputs_sha256": matched_run["inputs_sha256"],
                 "candidate_precision": "float32",
                 "reference_precision": "float64",
@@ -508,6 +522,10 @@ def _matched_run_manifests(
     )
     if candidate["run_id"] == reference["run_id"]:
         raise _PrecisionAuditError(code, "matched FP32 and FP64 manifests need distinct run IDs")
+    if candidate["input_root"] != reference["input_root"]:
+        raise _PrecisionAuditError(code, "matched-run input_root values must be identical")
+    if candidate["primary_input"] != reference["primary_input"]:
+        raise _PrecisionAuditError(code, "matched-run primary_input values must be identical")
     try:
         shared_output = candidate["output_path"].samefile(reference["output_path"])
     except OSError as error:
@@ -519,6 +537,13 @@ def _matched_run_manifests(
     if candidate["receiver_dataset"] != reference["receiver_dataset"]:
         raise _PrecisionAuditError(
             code, "matched runs must bind the same receiver dataset path"
+        )
+    if not _strict_json_equal(
+        candidate["stable_outputs"], reference["stable_outputs"]
+    ):
+        raise _PrecisionAuditError(
+            code,
+            "matched-run outputs may differ only in HDF5 path and receiver hash",
         )
     if candidate["inputs"] != reference["inputs"]:
         raise _PrecisionAuditError(code, "matched-run canonical input hash maps must be identical")
@@ -551,6 +576,8 @@ def _matched_run_manifests(
         "reference_run_id": reference["run_id"],
         "candidate_manifest": candidate_ref,
         "reference_manifest": reference_ref,
+        "input_root": candidate["input_root"],
+        "primary_input": candidate["primary_input"],
         "inputs_sha256": candidate["inputs_sha256"],
     }
 
@@ -590,6 +617,31 @@ def _validated_run_manifest(
         manifest, expected_precision, code
     )
     command = _validated_manifest_command(manifest, code)
+    input_root = _canonical_project_relative_posix_path(
+        _required_text(manifest, "input_root", "run manifest input_root", code),
+        "run manifest input_root",
+        code,
+    )
+    primary_input = _canonical_project_relative_posix_path(
+        _required_text(
+            manifest, "primary_input", "run manifest primary_input", code
+        ),
+        "run manifest primary_input",
+        code,
+    )
+    root_parts = PurePosixPath(input_root).parts
+    primary_parts = PurePosixPath(primary_input).parts
+    if (
+        len(primary_parts) <= len(root_parts)
+        or primary_parts[: len(root_parts)] != root_parts
+    ):
+        raise _PrecisionAuditError(
+            code, "run manifest primary_input must be a file within input_root"
+        )
+    if command.count(primary_input) != 1:
+        raise _PrecisionAuditError(
+            code, "run manifest command must reference primary_input exactly once"
+        )
     run_variant_fields = {
         "run_id",
         "environment",
@@ -606,7 +658,9 @@ def _validated_run_manifest(
         key: value for key, value in manifest.items() if key not in run_variant_fields
     }
 
-    inputs = _validated_manifest_inputs(ctx.project_root, manifest, code)
+    inputs = _validated_manifest_inputs(
+        ctx.project_root, manifest, input_root, primary_input, code
+    )
     inputs_sha256 = _required_sha256(manifest, "inputs_sha256", "run manifest inputs_sha256")
     if inputs_sha256 != _canonical_hash_map_sha256(inputs):
         raise _PrecisionAuditError(
@@ -627,8 +681,15 @@ def _validated_run_manifest(
         "run manifest outputs.receiver_dataset_sha256",
     )
     output_path = _resolve_project_regular_file(ctx.project_root, hdf5_ref, code)
+    stable_outputs = {
+        key: value
+        for key, value in outputs.items()
+        if key not in _RUN_VARIANT_OUTPUT_FIELDS and key != "receiver_dataset"
+    }
     try:
-        with h5py.File(output_path, "r") as handle:
+        with _open_verified_hdf5(
+            output_path, code, "matched-run HDF5 output"
+        ) as handle:
             dataset = _local_nonvirtual_dataset(
                 handle, dataset_ref, code, "matched-run receiver dataset"
             )
@@ -645,6 +706,8 @@ def _validated_run_manifest(
         )
     return {
         "run_id": run_id,
+        "input_root": input_root,
+        "primary_input": primary_input,
         "inputs": inputs,
         "inputs_sha256": inputs_sha256,
         "nonprecision_numerics": nonprecision_numerics,
@@ -652,6 +715,7 @@ def _validated_run_manifest(
         "command": command,
         "output_path": output_path,
         "receiver_dataset": dataset_ref,
+        "stable_outputs": stable_outputs,
         "stable_metadata": stable_metadata,
     }
 
@@ -701,28 +765,126 @@ def _validated_manifest_command(
 
 
 def _validated_manifest_inputs(
-    project_root: Path, manifest: Mapping[str, Any], code: str
+    project_root: Path,
+    manifest: Mapping[str, Any],
+    input_root: str,
+    primary_input: str,
+    code: str,
 ) -> dict[str, str]:
     raw = _mapping(manifest.get("inputs"), "run manifest inputs", code)
     if not raw:
         raise _PrecisionAuditError(code, "run manifest inputs must be non-empty")
-    inputs: dict[str, str] = {}
+    declared: dict[str, str] = {}
     for path_ref, declared_hash in raw.items():
-        if not isinstance(path_ref, str) or not path_ref or path_ref != path_ref.strip():
-            raise _PrecisionAuditError(
-                code, "run manifest input paths must be exact non-empty strings"
-            )
+        canonical_ref = _canonical_project_relative_posix_path(
+            path_ref, "run manifest input path", code
+        )
         normalized_hash = _sha256_text(
             declared_hash, f"run manifest inputs[{path_ref!r}]", code
         )
-        input_path = _resolve_project_regular_file(project_root, path_ref, code)
-        actual_hash = _file_sha256(input_path)
-        if actual_hash != normalized_hash:
+        declared[canonical_ref] = normalized_hash
+    if primary_input not in declared:
+        raise _PrecisionAuditError(code, "run manifest inputs must contain primary_input")
+    actual = _inventory_input_root(project_root, input_root, code)
+    if declared != actual:
+        raise _PrecisionAuditError(
+            code,
+            "run manifest inputs must exactly match the complete input_root inventory",
+        )
+    return actual
+
+
+def _canonical_project_relative_posix_path(
+    value: object, label: str, code: str
+) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or any(character.isspace() for character in value)
+        or "\\" in value
+    ):
+        raise _PrecisionAuditError(
+            code, f"{label} must be a canonical project-relative POSIX path"
+        )
+    parts = value.split("/")
+    if (
+        PurePosixPath(value).is_absolute()
+        or PureWindowsPath(value).drive
+        or any(not part or part in {".", ".."} for part in parts)
+    ):
+        raise _PrecisionAuditError(
+            code, f"{label} must be a canonical project-relative POSIX path"
+        )
+    return value
+
+
+def _inventory_input_root(
+    project_root: Path, input_root_ref: str, code: str
+) -> dict[str, str]:
+    root = _resolve_project_directory(project_root, input_root_ref, code)
+    resolved_project = project_root.resolve(strict=True)
+    inventory: dict[str, str] = {}
+    identities: dict[tuple[int, int], str] = {}
+    identity_fallback_paths: list[Path] = []
+
+    def visit(directory: Path) -> None:
+        try:
+            with os.scandir(directory) as scanned:
+                entries = sorted(scanned, key=lambda entry: entry.name)
+        except OSError as error:
             raise _PrecisionAuditError(
-                code, f"run manifest input SHA-256 is incorrect for {path_ref!r}"
+                code, f"input_root {input_root_ref!r} could not be enumerated"
+            ) from error
+        for entry in entries:
+            try:
+                metadata = entry.stat(follow_symlinks=False)
+            except OSError as error:
+                raise _PrecisionAuditError(
+                    code, f"input_root entry {entry.path!r} could not be inspected"
+                ) from error
+            file_attributes = getattr(metadata, "st_file_attributes", 0)
+            reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+            if stat.S_ISLNK(metadata.st_mode) or file_attributes & reparse_flag:
+                raise _PrecisionAuditError(
+                    code, "input_root must not contain symlinks or reparse points"
+                )
+            path = Path(entry.path)
+            if stat.S_ISDIR(metadata.st_mode):
+                visit(path)
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
+                raise _PrecisionAuditError(
+                    code, "input_root may contain only ordinary files and directories"
+                )
+            canonical_ref = _canonical_project_relative_posix_path(
+                path.relative_to(resolved_project).as_posix(),
+                "input_root inventory path",
+                code,
             )
-        inputs[path_ref] = normalized_hash
-    return inputs
+            identity = (metadata.st_dev, metadata.st_ino)
+            try:
+                duplicate_identity = (
+                    identity in identities
+                    if metadata.st_ino
+                    else any(path.samefile(other) for other in identity_fallback_paths)
+                )
+            except OSError as error:
+                raise _PrecisionAuditError(
+                    code, "input_root file identity could not be verified"
+                ) from error
+            if duplicate_identity:
+                raise _PrecisionAuditError(
+                    code,
+                    "input_root contains duplicate paths for one resolved file identity",
+                )
+            if metadata.st_ino:
+                identities[identity] = canonical_ref
+            else:
+                identity_fallback_paths.append(path)
+            inventory[canonical_ref] = _file_sha256(path, code)
+    visit(root)
+    return inventory
 
 
 def _canonical_hash_map_sha256(value: Mapping[str, str]) -> str:
@@ -743,9 +905,9 @@ def _strict_json_equal(left: object, right: object) -> bool:
     return canonical(left) == canonical(right)
 
 
-def _file_sha256(path: Path) -> str:
+def _file_sha256(path: Path, code: str) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
+    with _open_verified_binary_file(path, code, "manifest input") as handle:
         while block := handle.read(_MAX_HDF5_BLOCK_ELEMENTS):
             digest.update(block)
     return digest.hexdigest()
@@ -764,8 +926,10 @@ def _read_strict_json_object(path: Path, code: str) -> Mapping[str, Any]:
         raise ValueError(f"non-finite JSON constant {value}")
 
     try:
+        with _open_verified_binary_file(path, code, "run manifest") as handle:
+            payload = handle.read().decode("utf-8")
         parsed = json.loads(
-            path.read_text(encoding="utf-8"),
+            payload,
             object_pairs_hook=reject_duplicate_keys,
             parse_constant=reject_nonfinite_constant,
         )
@@ -774,6 +938,100 @@ def _read_strict_json_object(path: Path, code: str) -> Mapping[str, Any]:
     if not isinstance(parsed, Mapping):
         raise _PrecisionAuditError(code, "run manifest must be a JSON object")
     return parsed
+
+
+def _file_fingerprint(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        int(metadata.st_dev),
+        int(metadata.st_ino),
+        stat.S_IFMT(metadata.st_mode),
+        int(metadata.st_size),
+        int(metadata.st_mtime_ns),
+    )
+
+
+def _file_identity_unchanged(
+    path: Path, snapshots: Sequence[os.stat_result]
+) -> bool:
+    del path  # Retained as an injectable boundary for deterministic race regressions.
+    return (
+        bool(snapshots)
+        and all(stat.S_ISREG(item.st_mode) for item in snapshots)
+        and len({_file_fingerprint(item) for item in snapshots}) == 1
+    )
+
+
+def _verified_path_stat(path: Path, code: str, label: str) -> os.stat_result:
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise _PrecisionAuditError(code, f"{label} identity could not be inspected") from error
+    file_attributes = getattr(metadata, "st_file_attributes", 0)
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or file_attributes & reparse_flag
+        or not stat.S_ISREG(metadata.st_mode)
+    ):
+        raise _PrecisionAuditError(
+            code, f"{label} must remain an ordinary non-reparse file"
+        )
+    return metadata
+
+
+@contextmanager
+def _open_verified_binary_file(
+    path: Path, code: str, label: str
+) -> Iterator[Any]:
+    descriptor: int | None = None
+    raw: Any | None = None
+    try:
+        before = _verified_path_stat(path, code, label)
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        descriptor = os.open(path, flags)
+        opened = os.fstat(descriptor)
+        after_open = _verified_path_stat(path, code, label)
+        if not _file_identity_unchanged(path, (before, opened, after_open)):
+            raise _PrecisionAuditError(code, f"{label} identity changed while opening")
+        raw = os.fdopen(descriptor, "rb", buffering=0)
+        descriptor = None
+        try:
+            yield raw
+        finally:
+            final_open = os.fstat(raw.fileno())
+            final_path = _verified_path_stat(path, code, label)
+            unchanged = _file_identity_unchanged(
+                path, (opened, final_open, final_path)
+            )
+            raw.close()
+            raw = None
+            if not unchanged:
+                raise _PrecisionAuditError(
+                    code, f"{label} identity changed while reading"
+                )
+    except _PrecisionAuditError:
+        raise
+    except OSError as error:
+        raise _PrecisionAuditError(code, f"{label} could not be read safely: {error}") from error
+    finally:
+        if raw is not None:
+            raw.close()
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+@contextmanager
+def _open_verified_hdf5(
+    path: Path, code: str, label: str
+) -> Iterator[h5py.File]:
+    with _open_verified_binary_file(path, code, label) as raw:
+        with h5py.File(raw, "r", driver="fileobj") as handle:
+            yield handle
 
 
 def _resolve_project_regular_file(project_root: Path, path_ref: str, code: str) -> Path:
@@ -803,6 +1061,37 @@ def _resolve_project_regular_file(project_root: Path, path_ref: str, code: str) 
     except (OSError, RuntimeError, ValueError) as error:
         raise _PrecisionAuditError(
             code, f"evidence path {path_ref!r} must be a regular file under project_root"
+        ) from error
+
+
+def _resolve_project_directory(project_root: Path, path_ref: str, code: str) -> Path:
+    try:
+        root = project_root.resolve(strict=True)
+        lexical = Path(os.path.abspath(root / path_ref))
+        relative = lexical.relative_to(root)
+        current = root
+        reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        for part in relative.parts:
+            current = current / part
+            metadata = current.lstat()
+            file_attributes = getattr(metadata, "st_file_attributes", 0)
+            if stat.S_ISLNK(metadata.st_mode) or file_attributes & reparse_flag:
+                raise _PrecisionAuditError(
+                    code,
+                    f"input_root {path_ref!r} must not traverse symlinks or reparse points",
+                )
+        resolved = lexical.resolve(strict=True)
+        resolved.relative_to(root)
+        if not stat.S_ISDIR(resolved.stat().st_mode):
+            raise _PrecisionAuditError(
+                code, f"input_root {path_ref!r} must be an ordinary directory"
+            )
+        return resolved
+    except _PrecisionAuditError:
+        raise
+    except (OSError, RuntimeError, ValueError) as error:
+        raise _PrecisionAuditError(
+            code, f"input_root {path_ref!r} must be a directory under project_root"
         ) from error
 
 
@@ -909,7 +1198,11 @@ def _candidate_equals_audited_output(
     candidate: h5py.Dataset, output: Mapping[str, Any]
 ) -> bool:
     try:
-        with h5py.File(output["resolved"], "r") as handle:
+        with _open_verified_hdf5(
+            output["resolved"],
+            "BLOCK_FP32_ADEQUACY_EVIDENCE",
+            "audited receiver HDF5 output",
+        ) as handle:
             audited = _local_nonvirtual_dataset(
                 handle,
                 output["dataset"],
@@ -1002,7 +1295,11 @@ def _compare_adequacy_datasets(
 
 def _receiver_equals_total(output: Mapping[str, Any], total: np.ndarray) -> bool:
     try:
-        with h5py.File(output["resolved"], "r") as handle:
+        with _open_verified_hdf5(
+            output["resolved"],
+            "BLOCK_PRECISION_AUDIT_EVIDENCE",
+            "precision-audit receiver HDF5 output",
+        ) as handle:
             dataset = _local_nonvirtual_dataset(
                 handle,
                 output["dataset"],
@@ -1015,6 +1312,8 @@ def _receiver_equals_total(output: Mapping[str, Any], total: np.ndarray) -> bool
                 np.array_equal(np.asarray(dataset[selection]), total[selection])
                 for selection in _bounded_hdf5_slices(tuple(dataset.shape))
             )
+    except _PrecisionAuditError:
+        raise
     except (OSError, KeyError, TypeError, ValueError) as error:
         raise _PrecisionAuditError(
             "BLOCK_PRECISION_AUDIT_EVIDENCE",
