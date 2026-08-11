@@ -16,6 +16,10 @@ import h5py
 import numpy as np
 
 from scripts.core import GateContext, GateResult, GateState
+from scripts.gprmax_static_profile import (
+    LEGACY_STATIC_DECK_PROFILE,
+    validated_legacy_static_deck_profile,
+)
 
 
 _PRECISION_RISK_FLAGS = frozenset(
@@ -512,8 +516,12 @@ def _audit_fp32_adequacy(
                 "reference_manifest": matched_run["reference_manifest"],
                 "input_root": matched_run["input_root"],
                 "primary_input": matched_run["primary_input"],
+                "static_deck_profile": matched_run["static_deck_profile"],
                 "dependencies": list(matched_run["dependencies"]),
                 "dependency_count": matched_run["dependency_count"],
+                "geometry_hdf5_dependencies": list(
+                    matched_run["geometry_hdf5_dependencies"]
+                ),
                 "inputs_sha256": matched_run["inputs_sha256"],
                 "candidate_precision": "float32",
                 "reference_precision": "float64",
@@ -579,6 +587,16 @@ def _matched_run_manifests(
         expected_precision="float64",
         expected_dataset_sha256=reference_dataset_sha256,
     )
+    actual_environment = _mapping(
+        ctx.artifacts.get("environment"),
+        "artifacts.environment",
+        code,
+    )
+    if not _strict_json_equal(candidate["environment"], actual_environment):
+        raise _PrecisionAuditError(
+            code,
+            "FP32 run manifest environment must exactly match actual runtime evidence",
+        )
     if candidate["run_id"] == reference["run_id"]:
         raise _PrecisionAuditError(code, "matched FP32 and FP64 manifests need distinct run IDs")
     if candidate["input_root"] != reference["input_root"]:
@@ -613,6 +631,13 @@ def _matched_run_manifests(
             code, "matched-run static dependency closures must be identical"
         )
     if not _strict_json_equal(
+        candidate["geometry_hdf5_dependencies"],
+        reference["geometry_hdf5_dependencies"],
+    ):
+        raise _PrecisionAuditError(
+            code, "matched-run geometry HDF5 dataset closures must be identical"
+        )
+    if not _strict_json_equal(
         candidate["nonprecision_numerics"], reference["nonprecision_numerics"]
     ):
         raise _PrecisionAuditError(
@@ -641,8 +666,12 @@ def _matched_run_manifests(
         "reference_manifest": reference_ref,
         "input_root": candidate["input_root"],
         "primary_input": candidate["primary_input"],
+        "static_deck_profile": dict(LEGACY_STATIC_DECK_PROFILE),
         "dependencies": candidate["dependencies"],
         "dependency_count": len(candidate["dependencies"]),
+        "geometry_hdf5_dependencies": candidate[
+            "geometry_hdf5_dependencies"
+        ],
         "inputs_sha256": candidate["inputs_sha256"],
     }
 
@@ -678,7 +707,7 @@ def _validated_run_manifest(
         )
     nonprecision_numerics = dict(numerics)
     nonprecision_numerics.pop("precision")
-    nonprecision_environment = _validated_manifest_environment(
+    environment_evidence = _validated_manifest_environment(
         manifest, expected_precision, code
     )
     command = _validated_manifest_command(manifest, code)
@@ -731,7 +760,7 @@ def _validated_run_manifest(
         raise _PrecisionAuditError(
             code, "run manifest canonical input-set SHA-256 does not match its input map"
         )
-    dependencies = _audit_static_dependency_closure(
+    dependencies, geometry_hdf5_dependencies = _audit_static_dependency_closure(
         ctx.project_root,
         input_root,
         primary_input,
@@ -791,8 +820,10 @@ def _validated_run_manifest(
         "inputs": inputs,
         "inputs_sha256": inputs_sha256,
         "dependencies": dependencies,
+        "geometry_hdf5_dependencies": geometry_hdf5_dependencies,
         "nonprecision_numerics": nonprecision_numerics,
-        "nonprecision_environment": nonprecision_environment,
+        "environment": environment_evidence["environment"],
+        "nonprecision_environment": environment_evidence["nonprecision"],
         "command": command,
         "output_path": output_path,
         "receiver_dataset": dataset_ref,
@@ -825,10 +856,26 @@ def _validated_manifest_environment(
             code,
             "run manifest environment dtypes do not match its declared precision",
         )
+    try:
+        profile = validated_legacy_static_deck_profile(
+            environment.get("static_deck_profile")
+        )
+    except ValueError as error:
+        raise _PrecisionAuditError(
+            code, f"run manifest {error}"
+        ) from error
+    if environment["gprmax_version"] != profile["internal_version"]:
+        raise _PrecisionAuditError(
+            code,
+            "run manifest gprmax_version must match the reviewed static deck profile",
+        )
     return {
-        key: value
-        for key, value in environment.items()
-        if key not in {"real_dtype", "complex_dtype"}
+        "environment": dict(environment),
+        "nonprecision": {
+            key: value
+            for key, value in environment.items()
+            if key not in {"real_dtype", "complex_dtype"}
+        },
     }
 
 
@@ -881,7 +928,7 @@ def _audit_static_dependency_closure(
     primary_input: str,
     inventory: Mapping[str, str],
     code: str,
-) -> tuple[str, ...]:
+) -> tuple[tuple[str, ...], tuple[dict[str, Any], ...]]:
     """Prove file closure for the supported legacy static gprMax deck profile.
 
     The solver historically tries the process working directory before the input
@@ -891,6 +938,7 @@ def _audit_static_dependency_closure(
     """
     root_parts = PurePosixPath(input_root).parts
     dependencies: set[str] = {primary_input}
+    geometry_hdf5_dependencies: list[dict[str, Any]] = []
     active_includes: list[str] = []
 
     def bind_dependency(token: str, label: str) -> tuple[str, Path]:
@@ -912,7 +960,13 @@ def _audit_static_dependency_closure(
             )
         return canonical_ref, path
 
-    def add_dependency(token: str, label: str, *, include: bool = False) -> None:
+    def add_dependency(
+        token: str,
+        label: str,
+        *,
+        include: bool = False,
+        geometry_hdf5: bool = False,
+    ) -> None:
         canonical_ref, path = bind_dependency(token, label)
         if canonical_ref in active_includes:
             raise _PrecisionAuditError(code, "static deck include cycle detected")
@@ -921,6 +975,15 @@ def _audit_static_dependency_closure(
         dependencies.add(canonical_ref)
         if include:
             visit_deck(canonical_ref, path)
+        elif geometry_hdf5:
+            geometry_hdf5_dependencies.append(
+                _verified_geometry_hdf5_dependency(
+                    path,
+                    canonical_ref,
+                    inventory[canonical_ref],
+                    code,
+                )
+            )
 
     def visit_deck(deck_ref: str, path: Path) -> None:
         active_includes.append(deck_ref)
@@ -972,7 +1035,11 @@ def _audit_static_dependency_closure(
                         raise _PrecisionAuditError(
                             code, "#geometry_objects_read requires exactly five parameters"
                         )
-                    add_dependency(tokens[3], f"{location} geometry file")
+                    add_dependency(
+                        tokens[3],
+                        f"{location} geometry file",
+                        geometry_hdf5=True,
+                    )
                     add_dependency(tokens[4], f"{location} materials file")
                 elif command == "excitation_file":
                     if len(tokens) not in {1, 3}:
@@ -987,7 +1054,80 @@ def _audit_static_dependency_closure(
         primary_input, "run manifest primary_input"
     )
     visit_deck(primary_ref, primary_path)
-    return tuple(sorted(dependencies))
+    return (
+        tuple(sorted(dependencies)),
+        tuple(
+            sorted(
+                geometry_hdf5_dependencies,
+                key=lambda item: item["container_path"],
+            )
+        ),
+    )
+
+
+def _verified_geometry_hdf5_dependency(
+    path: Path,
+    container_ref: str,
+    container_sha256: str,
+    code: str,
+) -> dict[str, Any]:
+    """Bind every dataset the reviewed geometry reader can load."""
+    optional_paths = ("/rigidE", "/rigidH", "/ID")
+    try:
+        with _open_verified_binary_file(
+            path, code, "geometry objects HDF5 input"
+        ) as raw:
+            digest = hashlib.sha256()
+            while block := raw.read(_MAX_HDF5_BLOCK_ELEMENTS):
+                digest.update(block)
+            if digest.hexdigest() != container_sha256:
+                raise _PrecisionAuditError(
+                    code, "geometry HDF5 container changed after inventory verification"
+                )
+            raw.seek(0)
+            with h5py.File(raw, "r", driver="fileobj") as handle:
+                present = tuple(
+                    handle.get(dataset_ref, getlink=True) is not None
+                    for dataset_ref in optional_paths
+                )
+                if any(present) and not all(present):
+                    raise _PrecisionAuditError(
+                        code,
+                        "geometry HDF5 rigidE, rigidH, and ID datasets must be all present or all absent",
+                    )
+                dataset_paths = ("/data",) + (
+                    optional_paths if all(present) else ()
+                )
+                datasets: list[dict[str, str]] = []
+                for dataset_ref in dataset_paths:
+                    dataset = _local_nonvirtual_dataset(
+                        handle,
+                        dataset_ref,
+                        code,
+                        f"geometry HDF5 dataset {dataset_ref}",
+                    )
+                    if dataset.size == 0:
+                        raise _PrecisionAuditError(
+                            code,
+                            f"geometry HDF5 dataset {dataset_ref} must be non-empty",
+                        )
+                    datasets.append(
+                        {
+                            "dataset_path": dataset_ref,
+                            "sha256": _dataset_sha256(dataset),
+                        }
+                    )
+    except _PrecisionAuditError:
+        raise
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        raise _PrecisionAuditError(
+            code, f"geometry HDF5 dependency is unreadable: {error}"
+        ) from error
+    return {
+        "container_path": container_ref,
+        "container_sha256": container_sha256,
+        "datasets": datasets,
+    }
 
 
 def _canonical_project_relative_posix_path(

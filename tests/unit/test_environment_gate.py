@@ -8,6 +8,17 @@ from scripts.core import GateContext, GateState
 from scripts.audit_environment import audit_environment, collect_environment
 
 
+_LEGACY_STATIC_DECK_PROFILE = {
+    "profile_id": "gprmax-legacy-static-deck-v1",
+    "source_archive_sha256": (
+        "b98b4ee28f56a993506c51ac1acdb831657fcb1809e1efe6f6c6cd7eb627f75e"
+    ),
+    "source_tree_label": "gprMax-v.3.1.7",
+    "internal_version": "3.1.6",
+    "codename": "Big Smoke",
+}
+
+
 def test_missing_runtime_identity_blocks(tmp_path: Path):
     """Catches a gate that accepts an undeclared runtime manifest."""
     ctx = GateContext(tmp_path, {"runtime": {}})
@@ -52,6 +63,77 @@ def test_banner_import_path_and_precision_are_recorded(tmp_path: Path):
         "complex_dtype": "complex128",
         "python_version": "3.11.9",
     }
+
+
+def test_reviewed_static_deck_profile_is_validated_and_preserved(tmp_path: Path):
+    """Catches environment collection discarding the source identity precision needs."""
+    log = tmp_path / "logs" / "runtime.json"
+    log.parent.mkdir()
+    manifest = {
+        "gprmax_version": "3.1.6",
+        "banner": "gprMax 3.1.6 (Big Smoke)",
+        "import_path": "/opt/gprMax/gprMax/__init__.py",
+        "backend": "cpu",
+        "real_dtype": "float32",
+        "complex_dtype": "complex64",
+        "static_deck_profile": dict(_LEGACY_STATIC_DECK_PROFILE),
+    }
+    log.write_text(json.dumps(manifest), encoding="utf-8")
+    ctx = GateContext(tmp_path, {"runtime": {"manifest": "logs/runtime.json"}})
+
+    result = audit_environment(ctx)
+
+    assert result.state is GateState.PASS
+    assert ctx.artifacts["environment"] == manifest
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "not_an_object",
+        "missing_field",
+        "extra_field",
+        "boolean_field",
+        "wrong_source",
+        "version_disagreement",
+    ],
+)
+def test_declared_static_deck_profile_must_be_exact_when_present(
+    tmp_path: Path, mutation: str
+):
+    """Catches malformed or unreviewed profile evidence being silently discarded."""
+    manifest = {
+        "gprmax_version": "3.1.6",
+        "banner": "gprMax 3.1.6 (Big Smoke)",
+        "import_path": "/opt/gprMax/gprMax/__init__.py",
+        "backend": "cpu",
+        "real_dtype": "float32",
+        "complex_dtype": "complex64",
+        "static_deck_profile": dict(_LEGACY_STATIC_DECK_PROFILE),
+    }
+    profile = manifest["static_deck_profile"]
+    if mutation == "not_an_object":
+        manifest["static_deck_profile"] = "gprmax-legacy-static-deck-v1"
+    elif mutation == "missing_field":
+        profile.pop("codename")
+    elif mutation == "extra_field":
+        profile["unreviewed_source"] = "accepted"
+    elif mutation == "boolean_field":
+        profile["internal_version"] = True
+    elif mutation == "wrong_source":
+        profile["source_archive_sha256"] = "0" * 64
+    elif mutation == "version_disagreement":
+        manifest["gprmax_version"] = "3.1.7"
+    log = tmp_path / "logs" / "runtime.json"
+    log.parent.mkdir()
+    log.write_text(json.dumps(manifest), encoding="utf-8")
+    ctx = GateContext(tmp_path, {"runtime": {"manifest": "logs/runtime.json"}})
+
+    result = audit_environment(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_ENVIRONMENT_UNRESOLVED"
+    assert "environment" not in ctx.artifacts
 
 
 @pytest.mark.parametrize("field", ["gprmax_version", "banner", "import_path", "backend", "real_dtype", "complex_dtype"])
@@ -159,3 +241,72 @@ def test_run_manifest_schema_rejects_whitespace_required_environment_identity(fi
 
     assert errors
     assert list(errors[0].path) == ["environment", field]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "not_an_object",
+        "missing_field",
+        "extra_field",
+        "boolean_field",
+        "wrong_constant",
+        "version_disagreement",
+    ],
+)
+def test_run_manifest_schema_rejects_malformed_static_deck_profile(
+    mutation: str,
+):
+    """Catches formal manifests carrying ambiguous or unreviewed parser identity."""
+    schema = json.loads(
+        Path("schemas/run_manifest.schema.json").read_text(encoding="utf-8")
+    )
+    manifest = {
+        "run_id": "run-1",
+        "input_root": "inputs",
+        "primary_input": "inputs/model.in",
+        "environment": {
+            "gprmax_version": "3.1.6",
+            "banner": "gprMax 3.1.6 (Big Smoke)",
+            "import_path": "/opt/gprMax/gprMax/__init__.py",
+            "backend": "cpu",
+            "real_dtype": "float64",
+            "complex_dtype": "complex128",
+            "static_deck_profile": dict(_LEGACY_STATIC_DECK_PROFILE),
+        },
+        "command": ["python", "-m", "gprMax", "inputs/model.in"],
+        "inputs": {"inputs/model.in": "a" * 64},
+        "inputs_sha256": "b" * 64,
+        "numerics": {},
+        "outputs": {
+            "hdf5": "runs/run-1.h5",
+            "receiver_dataset": "/rxs/rx1/Ez",
+            "receiver_dataset_sha256": "c" * 64,
+        },
+        "started_at": "2026-08-09T00:00:00Z",
+        "finished_at": "2026-08-09T00:00:01Z",
+        "return_code": 0,
+    }
+    validator = Draft202012Validator(schema)
+    assert validator.is_valid(manifest)
+    generic_manifest = json.loads(json.dumps(manifest))
+    generic_manifest["environment"].pop("static_deck_profile")
+    generic_manifest["environment"]["gprmax_version"] = "3.1.7"
+    assert validator.is_valid(generic_manifest)
+    profile = manifest["environment"]["static_deck_profile"]
+    if mutation == "not_an_object":
+        manifest["environment"]["static_deck_profile"] = "legacy-v1"
+    elif mutation == "missing_field":
+        profile.pop("codename")
+    elif mutation == "extra_field":
+        profile["unreviewed_source"] = "accepted"
+    elif mutation == "boolean_field":
+        profile["internal_version"] = True
+    elif mutation == "wrong_constant":
+        profile["source_archive_sha256"] = "0" * 64
+    elif mutation == "version_disagreement":
+        manifest["environment"]["gprmax_version"] = "3.1.7"
+
+    errors = list(validator.iter_errors(manifest))
+
+    assert errors

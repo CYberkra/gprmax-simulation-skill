@@ -13,6 +13,17 @@ from scripts.audit_precision import audit_precision, local_ulp, precision_floor_
 from scripts.core import GateContext, GateState
 
 
+_LEGACY_STATIC_DECK_PROFILE = {
+    "profile_id": "gprmax-legacy-static-deck-v1",
+    "source_archive_sha256": (
+        "b98b4ee28f56a993506c51ac1acdb831657fcb1809e1efe6f6c6cd7eb627f75e"
+    ),
+    "source_tree_label": "gprMax-v.3.1.7",
+    "internal_version": "3.1.6",
+    "codename": "Big Smoke",
+}
+
+
 def _write_dataset(path: Path, dataset: str, values: np.ndarray) -> None:
     with h5py.File(path, "w") as handle:
         handle.create_dataset(dataset, data=values)
@@ -31,8 +42,37 @@ def _write_external_storage_dataset(
         stored[...] = values
 
 
-def _runtime(real_dtype: str = "float32", complex_dtype: str = "complex64") -> dict[str, str]:
-    return {"real_dtype": real_dtype, "complex_dtype": complex_dtype}
+def _write_geometry_input(path: Path, *, optional_arrays: bool = False) -> None:
+    """Write a real local geometry HDF5 fixture matching the reviewed read paths."""
+    with h5py.File(path, "w") as handle:
+        handle.attrs["dx_dy_dz"] = np.array([0.1, 0.1, 0.1], dtype=np.float64)
+        handle.create_dataset(
+            "/data", data=np.zeros((1, 2, 2), dtype=np.int16)
+        )
+        if optional_arrays:
+            handle.create_dataset(
+                "/rigidE", data=np.zeros((12, 1, 2, 2), dtype=np.int8)
+            )
+            handle.create_dataset(
+                "/rigidH", data=np.ones((6, 1, 2, 2), dtype=np.int8)
+            )
+            handle.create_dataset(
+                "/ID", data=np.zeros((6, 1, 2, 2), dtype=np.uint32)
+            )
+
+
+def _runtime(
+    real_dtype: str = "float32", complex_dtype: str = "complex64"
+) -> dict[str, object]:
+    return {
+        "gprmax_version": "3.1.6",
+        "banner": "gprMax 3.1.6 (Big Smoke)",
+        "import_path": "C:/gprmax/gprMax/__init__.py",
+        "backend": "cpu",
+        "real_dtype": real_dtype,
+        "complex_dtype": complex_dtype,
+        "static_deck_profile": dict(_LEGACY_STATIC_DECK_PROFILE),
+    }
 
 
 def _legacy_self_attested_evidence(
@@ -112,14 +152,7 @@ def _adequacy_evidence(
         "run_id": "run-fp32",
         "input_root": "inputs",
         "primary_input": "inputs/model.in",
-        "environment": {
-            "gprmax_version": "4.0.0",
-            "banner": "gprMax 4.0.0",
-            "import_path": "C:/gprmax/gprMax/__init__.py",
-            "backend": "cpu",
-            "real_dtype": "float32",
-            "complex_dtype": "complex64",
-        },
+        "environment": _runtime("float32", "complex64"),
         "command": ["python", "-m", "gprMax", "inputs/model.in"],
         "return_code": 0,
         "numerics": {**shared_numerics, "precision": "float32"},
@@ -138,14 +171,7 @@ def _adequacy_evidence(
         "run_id": "run-fp64",
         "input_root": "inputs",
         "primary_input": "inputs/model.in",
-        "environment": {
-            "gprmax_version": "4.0.0",
-            "banner": "gprMax 4.0.0",
-            "import_path": "C:/gprmax/gprMax/__init__.py",
-            "backend": "cpu",
-            "real_dtype": "float64",
-            "complex_dtype": "complex128",
-        },
+        "environment": _runtime("float64", "complex128"),
         "command": ["python", "-m", "gprMax", "inputs/model.in"],
         "return_code": 0,
         "numerics": {**shared_numerics, "precision": "float64"},
@@ -383,7 +409,7 @@ def test_receiver_rejects_external_raw_storage_outside_project(tmp_path: Path):
     ],
 )
 def test_missing_or_inconsistent_runtime_dtype_evidence_blocks(
-    tmp_path: Path, environment: dict[str, str] | None
+    tmp_path: Path, environment: dict[str, object] | None
 ):
     """Catches acceptance of an unresolved or internally inconsistent runtime precision pair."""
     artifacts = {} if environment is None else {"environment": environment}
@@ -574,11 +600,120 @@ def test_passing_fp32_comparison_fixture_allows_risk_flag_exception(tmp_path: Pa
     matched_run = adequacy["matched_run"]
     assert matched_run.get("input_root") == "inputs"
     assert matched_run.get("primary_input") == "inputs/model.in"
+    assert matched_run.get("static_deck_profile") == _LEGACY_STATIC_DECK_PROFILE
     assert matched_run["derived_change_projection"] == [
         "numerics.precision",
         "environment.real_dtype",
         "environment.complex_dtype",
     ]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_profile",
+        "gprmax_4_runtime",
+        "wrong_profile_id",
+        "wrong_source_archive",
+        "wrong_source_tree",
+        "wrong_internal_version",
+        "wrong_codename",
+        "extra_profile_field",
+        "boolean_profile_field",
+    ],
+)
+def test_fp32_exception_requires_exact_reviewed_static_deck_profile(
+    tmp_path: Path, mutation: str
+):
+    """Catches a closed parser authorizing source/runtime syntax it never reviewed."""
+    candidate = np.array([1.0], dtype=np.float32)
+    reference = np.array([1.0], dtype=np.float64)
+    _write_dataset(tmp_path / "adequacy.h5", "/candidate", candidate)
+    with h5py.File(tmp_path / "adequacy.h5", "a") as handle:
+        handle.create_dataset("reference", data=reference)
+    evidence = _adequacy_evidence(tmp_path, candidate, reference)
+
+    def apply_mutation(environment: dict[str, object]) -> None:
+        profile = environment["static_deck_profile"]
+        if mutation == "missing_profile":
+            environment.pop("static_deck_profile")
+        elif mutation == "gprmax_4_runtime":
+            environment["gprmax_version"] = "4.0.0"
+            environment["banner"] = "gprMax 4.0.0"
+        elif mutation == "wrong_profile_id":
+            profile["profile_id"] = "gprmax-legacy-static-deck-v2"
+        elif mutation == "wrong_source_archive":
+            profile["source_archive_sha256"] = "0" * 64
+        elif mutation == "wrong_source_tree":
+            profile["source_tree_label"] = "gprMax-v.4.0.0"
+        elif mutation == "wrong_internal_version":
+            profile["internal_version"] = "3.1.7"
+        elif mutation == "wrong_codename":
+            profile["codename"] = "Unknown"
+        elif mutation == "extra_profile_field":
+            profile["unreviewed_source"] = "accepted"
+        elif mutation == "boolean_profile_field":
+            profile["internal_version"] = True
+
+    for run_id in ("run-fp32", "run-fp64"):
+        path = tmp_path / "manifests" / f"{run_id}.json"
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        apply_mutation(manifest["environment"])
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+    actual_environment = _runtime()
+    apply_mutation(actual_environment)
+    ctx = _context(
+        tmp_path,
+        values=candidate,
+        artifacts={"environment": actual_environment},
+        numerics={
+            "precision_requirement": "float32",
+            "risk_flags": ["long_distance"],
+            "fp32_adequacy_evidence": evidence,
+        },
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
+
+
+@pytest.mark.parametrize(
+    "mutation", ["missing_profile", "wrong_source_archive", "import_path_mismatch"]
+)
+def test_fp32_exception_manifest_environment_must_match_actual_runtime_evidence(
+    tmp_path: Path, mutation: str
+):
+    """Catches matched manifests detached from the environment that produced the FP32 output."""
+    candidate = np.array([1.0], dtype=np.float32)
+    reference = np.array([1.0], dtype=np.float64)
+    _write_dataset(tmp_path / "adequacy.h5", "/candidate", candidate)
+    with h5py.File(tmp_path / "adequacy.h5", "a") as handle:
+        handle.create_dataset("reference", data=reference)
+    evidence = _adequacy_evidence(tmp_path, candidate, reference)
+    actual_environment = _runtime()
+    if mutation == "missing_profile":
+        actual_environment.pop("static_deck_profile")
+    elif mutation == "wrong_source_archive":
+        actual_environment["static_deck_profile"]["source_archive_sha256"] = "0" * 64
+    elif mutation == "import_path_mismatch":
+        actual_environment["import_path"] = "C:/different/gprMax/__init__.py"
+    ctx = _context(
+        tmp_path,
+        values=candidate,
+        artifacts={"environment": actual_environment},
+        numerics={
+            "precision_requirement": "float32",
+            "risk_flags": ["coherent_phase"],
+            "fp32_adequacy_evidence": evidence,
+        },
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
 
 
 def test_fp32_exception_publishes_verified_recursive_static_dependency_closure(
@@ -602,11 +737,12 @@ def test_fp32_exception_publishes_verified_recursive_static_dependency_closure(
         extra_files={
             "inputs/nested.in": "#include_file: inputs/deeper.in\n",
             "inputs/deeper.in": "#material: 4 0 1 0 nested\n",
-            "inputs/geometry.h5": b"geometry-hdf5-placeholder",
             "inputs/materials.txt": "#material: 5 0 1 0 imported\n",
             "inputs/excitation.txt": "0 1\n1 0\n",
         },
     )
+    _write_geometry_input(tmp_path / "inputs" / "geometry.h5")
+    _refresh_manifest_input_inventory(tmp_path)
     ctx = _context(
         tmp_path,
         values=candidate,
@@ -632,6 +768,168 @@ def test_fp32_exception_publishes_verified_recursive_static_dependency_closure(
         "inputs/model.in",
         "inputs/nested.in",
     ]
+    assert matched_run.get("geometry_hdf5_dependencies") == [
+        {
+            "container_path": "inputs/geometry.h5",
+            "container_sha256": _file_sha256(
+                tmp_path / "inputs" / "geometry.h5"
+            ),
+            "datasets": [
+                {
+                    "dataset_path": "/data",
+                    "sha256": (
+                        "2632e335e5ca8d191ae58955218d8fd4"
+                        "f66b18a9b54a4267130d43da28e296a0"
+                    ),
+                }
+            ],
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "attack",
+    [
+        "data_external_link",
+        "data_virtual_dataset",
+        "data_external_storage",
+        "optional_external_link",
+        "partial_optional_arrays",
+        "empty_data",
+    ],
+)
+def test_fp32_exception_rejects_geometry_hdf5_dereferenced_payloads(
+    tmp_path: Path, attack: str
+):
+    """Catches a hashed geometry container loading unbound data from another file."""
+    candidate = np.array([1.0], dtype=np.float32)
+    reference = np.array([1.0], dtype=np.float64)
+    _write_dataset(tmp_path / "adequacy.h5", "/candidate", candidate)
+    with h5py.File(tmp_path / "adequacy.h5", "a") as handle:
+        handle.create_dataset("reference", data=reference)
+    evidence = _adequacy_evidence(tmp_path, candidate, reference)
+    _write_static_deck(
+        tmp_path,
+        "#geometry_objects_read: 0 0 0 inputs/geometry.h5 inputs/materials.txt\n",
+        extra_files={
+            "inputs/materials.txt": "#material: 5 0 1 0 imported\n"
+        },
+    )
+    geometry_path = tmp_path / "inputs" / "geometry.h5"
+    geometry_data = np.zeros((1, 2, 2), dtype=np.int16)
+    external_hdf5 = tmp_path / "outside-geometry-payload.h5"
+    if attack in {"data_external_link", "optional_external_link"}:
+        _write_dataset(external_hdf5, "/payload", geometry_data)
+
+    if attack == "data_external_link":
+        with h5py.File(geometry_path, "w") as handle:
+            handle.attrs["dx_dy_dz"] = [0.1, 0.1, 0.1]
+            handle["data"] = h5py.ExternalLink(str(external_hdf5), "/payload")
+    elif attack == "data_virtual_dataset":
+        _write_dataset(external_hdf5, "/payload", geometry_data)
+        layout = h5py.VirtualLayout(shape=geometry_data.shape, dtype=np.int16)
+        layout[:] = h5py.VirtualSource(
+            str(external_hdf5), "/payload", shape=geometry_data.shape
+        )
+        with h5py.File(geometry_path, "w", libver="latest") as handle:
+            handle.attrs["dx_dy_dz"] = [0.1, 0.1, 0.1]
+            handle.create_virtual_dataset("/data", layout)
+    elif attack == "data_external_storage":
+        _write_external_storage_dataset(
+            geometry_path,
+            "/data",
+            geometry_data,
+            tmp_path / "outside-geometry.raw",
+        )
+        with h5py.File(geometry_path, "a") as handle:
+            handle.attrs["dx_dy_dz"] = [0.1, 0.1, 0.1]
+    elif attack == "optional_external_link":
+        _write_geometry_input(geometry_path)
+        with h5py.File(geometry_path, "a") as handle:
+            handle["rigidE"] = h5py.ExternalLink(
+                str(external_hdf5), "/payload"
+            )
+            handle.create_dataset(
+                "/rigidH", data=np.ones((6, 1, 2, 2), dtype=np.int8)
+            )
+            handle.create_dataset(
+                "/ID", data=np.zeros((6, 1, 2, 2), dtype=np.uint32)
+            )
+    elif attack == "partial_optional_arrays":
+        _write_geometry_input(geometry_path)
+        with h5py.File(geometry_path, "a") as handle:
+            handle.create_dataset(
+                "/rigidE", data=np.zeros((12, 1, 2, 2), dtype=np.int8)
+            )
+    elif attack == "empty_data":
+        with h5py.File(geometry_path, "w") as handle:
+            handle.attrs["dx_dy_dz"] = [0.1, 0.1, 0.1]
+            handle.create_dataset("/data", data=np.empty((0, 2, 2), dtype=np.int16))
+    _refresh_manifest_input_inventory(tmp_path)
+    ctx = _context(
+        tmp_path,
+        values=candidate,
+        numerics={
+            "precision_requirement": "float32",
+            "risk_flags": ["weak_differential"],
+            "fp32_adequacy_evidence": evidence,
+        },
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
+
+
+def test_fp32_exception_accepts_and_hashes_complete_local_geometry_arrays(
+    tmp_path: Path,
+):
+    """Catches rejecting the reviewed all-present rigid/ID read branch or omitting its hashes."""
+    candidate = np.array([1.0], dtype=np.float32)
+    reference = np.array([1.0], dtype=np.float64)
+    _write_dataset(tmp_path / "adequacy.h5", "/candidate", candidate)
+    with h5py.File(tmp_path / "adequacy.h5", "a") as handle:
+        handle.create_dataset("reference", data=reference)
+    evidence = _adequacy_evidence(tmp_path, candidate, reference)
+    _write_static_deck(
+        tmp_path,
+        "#geometry_objects_read: 0 0 0 inputs/geometry.h5 inputs/materials.txt\n",
+        extra_files={
+            "inputs/materials.txt": "#material: 5 0 1 0 imported\n"
+        },
+    )
+    _write_geometry_input(
+        tmp_path / "inputs" / "geometry.h5", optional_arrays=True
+    )
+    _refresh_manifest_input_inventory(tmp_path)
+    ctx = _context(
+        tmp_path,
+        values=candidate,
+        numerics={
+            "precision_requirement": "float32",
+            "risk_flags": ["weak_differential"],
+            "fp32_adequacy_evidence": evidence,
+        },
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.PASS
+    geometry_evidence = ctx.artifacts["derived"]["precision"][
+        "fp32_adequacy"
+    ]["matched_run"].get("geometry_hdf5_dependencies")
+    assert geometry_evidence is not None
+    assert [item["dataset_path"] for item in geometry_evidence[0]["datasets"]] == [
+        "/data",
+        "/rigidE",
+        "/rigidH",
+        "/ID",
+    ]
+    assert all(
+        len(item["sha256"]) == 64
+        for item in geometry_evidence[0]["datasets"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -678,6 +976,8 @@ def test_fp32_exception_blocks_dependency_outside_input_root(
             "inputs/materials.txt": "#material: 5 0 1 0 imported\n",
         },
     )
+    _write_geometry_input(tmp_path / "inputs" / "geometry.h5")
+    _refresh_manifest_input_inventory(tmp_path)
     (tmp_path / outside_ref).write_bytes(b"external dependency")
     ctx = _context(
         tmp_path,

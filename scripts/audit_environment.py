@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from scripts.core import GateContext, GateResult, GateState
+from scripts.gprmax_static_profile import validated_legacy_static_deck_profile
 
 
 _REQUIRED_FIELDS = (
@@ -44,6 +45,18 @@ def collect_environment(ctx: GateContext) -> dict[str, Any]:
         optional_value = value.get(field)
         if optional_value is not None:
             environment[field] = _optional_text(optional_value, field)
+    if "static_deck_profile" in value:
+        try:
+            profile = validated_legacy_static_deck_profile(
+                value["static_deck_profile"]
+            )
+        except ValueError as error:
+            raise EnvironmentResolutionError(str(error)) from error
+        if environment["gprmax_version"] != profile["internal_version"]:
+            raise EnvironmentResolutionError(
+                "runtime gprmax_version must match static_deck_profile.internal_version"
+            )
+        environment["static_deck_profile"] = profile
 
     ctx.artifacts["environment"] = environment
     return environment
