@@ -15,8 +15,44 @@ def _write_dataset(path: Path, dataset: str, values: np.ndarray) -> None:
         handle.create_dataset(dataset, data=values)
 
 
+def _write_external_storage_dataset(
+    path: Path, dataset: str, values: np.ndarray, raw_path: Path
+) -> None:
+    with h5py.File(path, "w") as handle:
+        stored = handle.create_dataset(
+            dataset,
+            shape=values.shape,
+            dtype=values.dtype,
+            external=[(str(raw_path), 0, values.nbytes)],
+        )
+        stored[...] = values
+
+
 def _runtime(real_dtype: str = "float32", complex_dtype: str = "complex64") -> dict[str, str]:
     return {"real_dtype": real_dtype, "complex_dtype": complex_dtype}
+
+
+def _legacy_self_attested_evidence(
+    candidate: np.ndarray, reference: np.ndarray
+) -> dict[str, object]:
+    return {
+        "comparison_fixture": "adequacy.h5",
+        "fp32_dataset": "/candidate",
+        "fp64_dataset": "/reference",
+        "rtol": 1e-5,
+        "atol": 1e-8,
+        "matched_run": {
+            "candidate_run_id": "run-fp32",
+            "reference_run_id": "run-fp64",
+            "candidate_inputs_sha256": "a" * 64,
+            "reference_inputs_sha256": "a" * 64,
+            "candidate_precision": "float32",
+            "reference_precision": "float64",
+            "declared_changes": ["precision"],
+            "candidate_dataset_sha256": _array_sha256(candidate),
+            "reference_dataset_sha256": _array_sha256(reference),
+        },
+    }
 
 
 def _array_sha256(values: np.ndarray) -> str:
@@ -34,7 +70,18 @@ def _array_sha256(values: np.ndarray) -> str:
     return digest.hexdigest()
 
 
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _canonical_hash_map_sha256(value: dict[str, str]) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 def _adequacy_evidence(
+    project_root: Path,
     candidate: np.ndarray,
     reference: np.ndarray,
     *,
@@ -42,7 +89,76 @@ def _adequacy_evidence(
     rtol: float = 1e-5,
     atol: float = 1e-8,
 ) -> dict[str, object]:
-    input_hash = "a" * 64
+    manifests = project_root / "manifests"
+    manifests.mkdir(exist_ok=True)
+    inputs_dir = project_root / "inputs"
+    inputs_dir.mkdir(exist_ok=True)
+    (inputs_dir / "geometry.bin").write_bytes(b"geometry-v1\x00\x01")
+    (inputs_dir / "model.in").write_bytes(b"#domain: 1 1 1\n")
+    input_hashes = {
+        "inputs/geometry.bin": _file_sha256(inputs_dir / "geometry.bin"),
+        "inputs/model.in": _file_sha256(inputs_dir / "model.in"),
+    }
+    inputs_sha256 = _canonical_hash_map_sha256(input_hashes)
+    shared_numerics = {"grid_sha256": "c" * 64, "subgrid_count": 1}
+    runs = project_root / "runs"
+    runs.mkdir(exist_ok=True)
+    _write_dataset(runs / "run-fp32.h5", "/rxs/rx1/Ez", candidate)
+    _write_dataset(runs / "run-fp64.h5", "/rxs/rx1/Ez", reference)
+    candidate_manifest = {
+        "run_id": "run-fp32",
+        "environment": {
+            "gprmax_version": "4.0.0",
+            "banner": "gprMax 4.0.0",
+            "import_path": "C:/gprmax/gprMax/__init__.py",
+            "backend": "cpu",
+            "real_dtype": "float32",
+            "complex_dtype": "complex64",
+        },
+        "command": ["python", "-m", "gprMax", "inputs/model.in"],
+        "return_code": 0,
+        "numerics": {**shared_numerics, "precision": "float32"},
+        "inputs": input_hashes,
+        "inputs_sha256": inputs_sha256,
+        "outputs": {
+            "hdf5": "runs/run-fp32.h5",
+            "receiver_dataset": "/rxs/rx1/Ez",
+            "receiver_dataset_sha256": _array_sha256(candidate),
+        },
+        "started_at": "2026-08-09T00:00:00Z",
+        "finished_at": "2026-08-09T00:01:00Z",
+        "source_configuration": {"model": "inputs/model.in", "seed": 1},
+    }
+    reference_manifest = {
+        "run_id": "run-fp64",
+        "environment": {
+            "gprmax_version": "4.0.0",
+            "banner": "gprMax 4.0.0",
+            "import_path": "C:/gprmax/gprMax/__init__.py",
+            "backend": "cpu",
+            "real_dtype": "float64",
+            "complex_dtype": "complex128",
+        },
+        "command": ["python", "-m", "gprMax", "inputs/model.in"],
+        "return_code": 0,
+        "numerics": {**shared_numerics, "precision": "float64"},
+        "inputs": input_hashes,
+        "inputs_sha256": inputs_sha256,
+        "outputs": {
+            "hdf5": "runs/run-fp64.h5",
+            "receiver_dataset": "/rxs/rx1/Ez",
+            "receiver_dataset_sha256": _array_sha256(reference),
+        },
+        "started_at": "2026-08-09T00:02:00Z",
+        "finished_at": "2026-08-09T00:03:00Z",
+        "source_configuration": {"model": "inputs/model.in", "seed": 1},
+    }
+    (manifests / "run-fp32.json").write_text(
+        json.dumps(candidate_manifest), encoding="utf-8"
+    )
+    (manifests / "run-fp64.json").write_text(
+        json.dumps(reference_manifest), encoding="utf-8"
+    )
     return {
         "comparison_fixture": fixture,
         "fp32_dataset": "/candidate",
@@ -50,15 +166,8 @@ def _adequacy_evidence(
         "rtol": rtol,
         "atol": atol,
         "matched_run": {
-            "candidate_run_id": "run-fp32",
-            "reference_run_id": "run-fp64",
-            "candidate_inputs_sha256": input_hash,
-            "reference_inputs_sha256": input_hash,
-            "candidate_precision": "float32",
-            "reference_precision": "float64",
-            "declared_changes": ["precision"],
-            "candidate_dataset_sha256": _array_sha256(candidate),
-            "reference_dataset_sha256": _array_sha256(reference),
+            "candidate_manifest": "manifests/run-fp32.json",
+            "reference_manifest": "manifests/run-fp64.json",
         },
     }
 
@@ -184,6 +293,29 @@ def test_receiver_rejects_dereferenced_hdf5_sources_outside_project(
             layout = h5py.VirtualLayout(shape=values.shape, dtype=values.dtype)
             layout[:] = h5py.VirtualSource(str(outside), "/data", shape=values.shape)
             handle.create_virtual_dataset("receiver", layout)
+    ctx = GateContext(
+        project,
+        {
+            "numerics": {"precision_requirement": "auto"},
+            "outputs": {"hdf5": "run.h5", "receiver_dataset": "/receiver"},
+        },
+        artifacts={"environment": _runtime()},
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_OUTPUT_EVIDENCE"
+
+
+def test_receiver_rejects_external_raw_storage_outside_project(tmp_path: Path):
+    """Catches a local HDF5 dataset proxying its raw bytes from outside project_root."""
+    project = tmp_path / "project"
+    project.mkdir()
+    values = np.array([1.0, 2.0], dtype=np.float32)
+    _write_external_storage_dataset(
+        project / "run.h5", "/receiver", values, tmp_path / "outside.raw"
+    )
     ctx = GateContext(
         project,
         {
@@ -363,7 +495,7 @@ def test_fp32_adequacy_fixture_must_pass_declared_comparison(tmp_path: Path):
         numerics={
             "precision_requirement": "float32",
             "risk_flags": ["high_dynamic_range"],
-            "fp32_adequacy_evidence": _adequacy_evidence(candidate, reference),
+            "fp32_adequacy_evidence": _adequacy_evidence(tmp_path, candidate, reference),
         },
     )
 
@@ -386,7 +518,7 @@ def test_passing_fp32_comparison_fixture_allows_risk_flag_exception(tmp_path: Pa
         numerics={
             "precision_requirement": "float32",
             "risk_flags": ["fine_delay_fit"],
-            "fp32_adequacy_evidence": _adequacy_evidence(candidate, reference),
+            "fp32_adequacy_evidence": _adequacy_evidence(tmp_path, candidate, reference),
         },
     )
 
@@ -395,7 +527,13 @@ def test_passing_fp32_comparison_fixture_allows_risk_flag_exception(tmp_path: Pa
     assert result.state is GateState.PASS
     assert result.code == "PASS_PRECISION"
     assert result.evidence == ("run.h5", "adequacy.h5")
-    assert ctx.artifacts["derived"]["precision"]["fp32_adequacy"]["passed"] is True
+    adequacy = ctx.artifacts["derived"]["precision"]["fp32_adequacy"]
+    assert adequacy["passed"] is True
+    assert adequacy["matched_run"]["derived_change_projection"] == [
+        "numerics.precision",
+        "environment.real_dtype",
+        "environment.complex_dtype",
+    ]
 
 
 def test_fp32_candidate_must_exactly_equal_audited_receiver(tmp_path: Path):
@@ -412,7 +550,34 @@ def test_fp32_candidate_must_exactly_equal_audited_receiver(tmp_path: Path):
         numerics={
             "precision_requirement": "float32",
             "risk_flags": ["weak_differential"],
-            "fp32_adequacy_evidence": _adequacy_evidence(candidate, reference),
+            "fp32_adequacy_evidence": _adequacy_evidence(tmp_path, candidate, reference),
+        },
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
+
+
+def test_contract_only_self_attestation_cannot_authorize_approximate_reference(
+    tmp_path: Path,
+):
+    """Catches caller-selected run IDs/hashes authorizing an unanchored reference array."""
+    candidate = np.array([1.0, 1.000001], dtype=np.float32)
+    arbitrary_reference = np.array([1.0, 1.0000011], dtype=np.float64)
+    _write_dataset(tmp_path / "adequacy.h5", "/candidate", candidate)
+    with h5py.File(tmp_path / "adequacy.h5", "a") as handle:
+        handle.create_dataset("reference", data=arbitrary_reference)
+    ctx = _context(
+        tmp_path,
+        values=candidate,
+        numerics={
+            "precision_requirement": "float32",
+            "risk_flags": ["weak_differential"],
+            "fp32_adequacy_evidence": _legacy_self_attested_evidence(
+                candidate, arbitrary_reference
+            ),
         },
     )
 
@@ -423,31 +588,198 @@ def test_fp32_candidate_must_exactly_equal_audited_receiver(tmp_path: Path):
 
 
 @pytest.mark.parametrize(
-    ("field", "value"),
+    "mutation",
     [
-        ("reference_inputs_sha256", "b" * 64),
-        ("declared_changes", ["precision", "grid"]),
-        ("candidate_dataset_sha256", "0" * 64),
-        ("reference_dataset_sha256", "0" * 64),
+        "same_run_id",
+        "run_id_filename_mismatch",
+        "failed_return_code",
+        "wrong_reference_precision",
+        "other_numerics_change",
+        "numerics_json_type_change",
+        "incorrect_input_file_hash",
+        "incorrect_input_set_hash",
+        "incorrect_output_dataset_hash",
+        "shared_run_output_file",
+        "missing_formal_field",
+        "wrong_environment_dtype",
+        "environment_metadata_change",
+        "command_change",
+        "unprojected_top_level_change",
+        "stable_metadata_json_type_change",
     ],
 )
 def test_fp32_adequacy_requires_verified_matched_run_provenance(
-    tmp_path: Path, field: str, value: object
+    tmp_path: Path, mutation: str
 ):
-    """Catches unverified input identity, extra run changes, or false dataset hashes."""
+    """Catches failed/unmatched runs, unverified files, or changes beyond precision."""
     candidate = np.array([1.0, 1.000001], dtype=np.float32)
     reference = np.array([1.0, 1.0000011], dtype=np.float64)
     with h5py.File(tmp_path / "adequacy.h5", "w") as handle:
         handle.create_dataset("candidate", data=candidate)
         handle.create_dataset("reference", data=reference)
-    evidence = _adequacy_evidence(candidate, reference)
-    evidence["matched_run"][field] = value
+    evidence = _adequacy_evidence(tmp_path, candidate, reference)
+    candidate_path = tmp_path / "manifests" / "run-fp32.json"
+    reference_path = tmp_path / "manifests" / "run-fp64.json"
+    candidate_manifest = json.loads(candidate_path.read_text(encoding="utf-8"))
+    reference_manifest = json.loads(reference_path.read_text(encoding="utf-8"))
+    if mutation == "same_run_id":
+        reference_manifest["run_id"] = candidate_manifest["run_id"]
+    elif mutation == "run_id_filename_mismatch":
+        reference_manifest["run_id"] = "other-fp64-run"
+    elif mutation == "failed_return_code":
+        reference_manifest["return_code"] = 1
+    elif mutation == "wrong_reference_precision":
+        reference_manifest["numerics"]["precision"] = "float32"
+    elif mutation == "other_numerics_change":
+        reference_manifest["numerics"]["grid_sha256"] = "d" * 64
+    elif mutation == "numerics_json_type_change":
+        reference_manifest["numerics"]["subgrid_count"] = True
+    elif mutation == "incorrect_input_file_hash":
+        reference_manifest["inputs"]["inputs/model.in"] = "0" * 64
+    elif mutation == "incorrect_input_set_hash":
+        reference_manifest["inputs_sha256"] = "0" * 64
+    elif mutation == "incorrect_output_dataset_hash":
+        reference_manifest["outputs"]["receiver_dataset_sha256"] = "0" * 64
+    elif mutation == "shared_run_output_file":
+        with h5py.File(tmp_path / "runs" / "run-fp32.h5", "a") as handle:
+            handle.create_dataset("reference", data=reference)
+        reference_manifest["outputs"]["hdf5"] = "runs/run-fp32.h5"
+        reference_manifest["outputs"]["receiver_dataset"] = "/reference"
+    elif mutation == "missing_formal_field":
+        reference_manifest.pop("environment")
+    elif mutation == "wrong_environment_dtype":
+        reference_manifest["environment"]["real_dtype"] = "float32"
+    elif mutation == "environment_metadata_change":
+        reference_manifest["environment"]["backend"] = "gpu"
+    elif mutation == "command_change":
+        reference_manifest["command"].append("--different-model-setting")
+    elif mutation == "unprojected_top_level_change":
+        reference_manifest["source_configuration"] = {"antenna": "different"}
+    elif mutation == "stable_metadata_json_type_change":
+        reference_manifest["source_configuration"]["seed"] = True
+    reference_path.write_text(json.dumps(reference_manifest), encoding="utf-8")
     ctx = _context(
         tmp_path,
         values=candidate,
         numerics={
             "precision_requirement": "float32",
             "risk_flags": ["long_distance"],
+            "fp32_adequacy_evidence": evidence,
+        },
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "[]",
+        '{"run_id":"first","run_id":"duplicate"}',
+        '{"run_id":NaN}',
+    ],
+)
+def test_matched_run_manifest_requires_strict_json_object(tmp_path: Path, payload: str):
+    """Catches non-object, duplicate-key, and non-finite JSON run evidence."""
+    candidate = np.array([1.0], dtype=np.float32)
+    reference = np.array([1.0], dtype=np.float64)
+    with h5py.File(tmp_path / "adequacy.h5", "w") as handle:
+        handle.create_dataset("candidate", data=candidate)
+        handle.create_dataset("reference", data=reference)
+    evidence = _adequacy_evidence(tmp_path, candidate, reference)
+    (tmp_path / "manifests" / "run-fp64.json").write_text(payload, encoding="utf-8")
+    ctx = _context(
+        tmp_path,
+        values=candidate,
+        numerics={
+            "precision_requirement": "float32",
+            "risk_flags": ["coherent_phase"],
+            "fp32_adequacy_evidence": evidence,
+        },
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
+
+
+def test_matched_run_manifest_path_must_remain_inside_project(tmp_path: Path):
+    """Catches a manifest reference escaping project_root before provenance checks."""
+    project = tmp_path / "project"
+    project.mkdir()
+    candidate = np.array([1.0], dtype=np.float32)
+    reference = np.array([1.0], dtype=np.float64)
+    with h5py.File(project / "adequacy.h5", "w") as handle:
+        handle.create_dataset("candidate", data=candidate)
+        handle.create_dataset("reference", data=reference)
+    evidence = _adequacy_evidence(project, candidate, reference)
+    outside = tmp_path / "outside-manifest.json"
+    outside.write_text(
+        (project / "manifests" / "run-fp64.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    evidence["matched_run"]["reference_manifest"] = "../outside-manifest.json"
+    ctx = _context(
+        project,
+        values=candidate,
+        numerics={
+            "precision_requirement": "float32",
+            "risk_flags": ["coherent_phase"],
+            "fp32_adequacy_evidence": evidence,
+        },
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
+
+
+def test_manifest_input_hashes_are_recomputed_from_actual_project_files(tmp_path: Path):
+    """Catches unchanged manifest hashes after an actual input file is modified."""
+    candidate = np.array([1.0], dtype=np.float32)
+    reference = np.array([1.0], dtype=np.float64)
+    with h5py.File(tmp_path / "adequacy.h5", "w") as handle:
+        handle.create_dataset("candidate", data=candidate)
+        handle.create_dataset("reference", data=reference)
+    evidence = _adequacy_evidence(tmp_path, candidate, reference)
+    (tmp_path / "inputs" / "model.in").write_bytes(b"tampered input\n")
+    ctx = _context(
+        tmp_path,
+        values=candidate,
+        numerics={
+            "precision_requirement": "float32",
+            "risk_flags": ["weak_differential"],
+            "fp32_adequacy_evidence": evidence,
+        },
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
+
+
+def test_manifest_output_hash_is_recomputed_from_actual_run_dataset(tmp_path: Path):
+    """Catches a reference run output changed after its manifest was recorded."""
+    candidate = np.array([1.0], dtype=np.float32)
+    reference = np.array([1.0], dtype=np.float64)
+    with h5py.File(tmp_path / "adequacy.h5", "w") as handle:
+        handle.create_dataset("candidate", data=candidate)
+        handle.create_dataset("reference", data=reference)
+    evidence = _adequacy_evidence(tmp_path, candidate, reference)
+    with h5py.File(tmp_path / "runs" / "run-fp64.h5", "r+") as handle:
+        handle["/rxs/rx1/Ez"][...] = np.array([2.0], dtype=np.float64)
+    ctx = _context(
+        tmp_path,
+        values=candidate,
+        numerics={
+            "precision_requirement": "float32",
+            "risk_flags": ["weak_differential"],
             "fp32_adequacy_evidence": evidence,
         },
     )
@@ -472,6 +804,7 @@ def test_overflowing_per_sample_tolerance_blocks_as_malformed_evidence(tmp_path:
             "precision_requirement": "float32",
             "risk_flags": ["coherent_phase"],
             "fp32_adequacy_evidence": _adequacy_evidence(
+                tmp_path,
                 candidate,
                 reference,
                 rtol=float(np.finfo(np.float64).max),
@@ -514,7 +847,48 @@ def test_fp32_comparison_rejects_dereferenced_sources_outside_project(
             "numerics": {
                 "precision_requirement": "float32",
                 "risk_flags": ["fine_delay_fit"],
-                "fp32_adequacy_evidence": _adequacy_evidence(candidate, reference),
+                "fp32_adequacy_evidence": _adequacy_evidence(project, candidate, reference),
+            },
+            "outputs": {"hdf5": "run.h5", "receiver_dataset": "/rxs/rx1/Ez"},
+        },
+        artifacts={"environment": _runtime()},
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.BLOCK
+    assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
+
+
+@pytest.mark.parametrize("external_role", ["candidate", "reference"])
+def test_fp32_comparison_rejects_external_raw_storage_outside_project(
+    tmp_path: Path, external_role: str
+):
+    """Catches local comparison datasets sourcing raw bytes outside project_root."""
+    candidate = np.array([1.0, 1.000001], dtype=np.float32)
+    reference = np.array([1.0, 1.0000011], dtype=np.float64)
+    _write_dataset(tmp_path / "run.h5", "/rxs/rx1/Ez", candidate)
+    with h5py.File(tmp_path / "adequacy.h5", "w") as handle:
+        for role, values in (("candidate", candidate), ("reference", reference)):
+            if role == external_role:
+                stored = handle.create_dataset(
+                    role,
+                    shape=values.shape,
+                    dtype=values.dtype,
+                    external=[(str(tmp_path.parent / f"outside-{role}.raw"), 0, values.nbytes)],
+                )
+                stored[...] = values
+            else:
+                handle.create_dataset(role, data=values)
+    ctx = GateContext(
+        tmp_path,
+        {
+            "numerics": {
+                "precision_requirement": "float32",
+                "risk_flags": ["fine_delay_fit"],
+                "fp32_adequacy_evidence": _legacy_self_attested_evidence(
+                    candidate, reference
+                ),
             },
             "outputs": {"hdf5": "run.h5", "receiver_dataset": "/rxs/rx1/Ez"},
         },

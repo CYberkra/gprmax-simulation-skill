@@ -6,7 +6,9 @@ from itertools import product
 import json
 import math
 from numbers import Real
+import os
 from pathlib import Path
+import stat
 from typing import Any
 
 import h5py
@@ -27,6 +29,18 @@ _PRECISION_RISK_FLAGS = frozenset(
 _RUNTIME_DTYPE_PAIRS = {
     ("float32", "complex64"): 32,
     ("float64", "complex128"): 64,
+}
+_RUN_MANIFEST_ENVIRONMENT_FIELDS = (
+    "gprmax_version",
+    "banner",
+    "import_path",
+    "backend",
+    "real_dtype",
+    "complex_dtype",
+)
+_RUN_MANIFEST_PRECISION_DTYPES = {
+    "float32": ("float32", "complex64"),
+    "float64": ("float64", "complex128"),
 }
 
 # This is an algorithm-local rounding margin: a median residual at or below
@@ -363,7 +377,6 @@ def _audit_fp32_adequacy(
     atol = _nonnegative_finite(
         evidence.get("atol"), "fp32 adequacy atol", "BLOCK_FP32_ADEQUACY_EVIDENCE"
     )
-    matched_run = _matched_run_provenance(evidence)
     fixture_path = _resolve_project_file(
         ctx.project_root, fixture_ref, "BLOCK_FP32_ADEQUACY_EVIDENCE"
     )
@@ -405,16 +418,12 @@ def _audit_fp32_adequacy(
                 )
             candidate_hash = _dataset_sha256(candidate_dataset)
             reference_hash = _dataset_sha256(reference_dataset)
-            if candidate_hash != matched_run["candidate_dataset_sha256"]:
-                raise _PrecisionAuditError(
-                    "BLOCK_FP32_ADEQUACY_EVIDENCE",
-                    "FP32 candidate dataset SHA-256 does not match matched-run provenance",
-                )
-            if reference_hash != matched_run["reference_dataset_sha256"]:
-                raise _PrecisionAuditError(
-                    "BLOCK_FP32_ADEQUACY_EVIDENCE",
-                    "FP64 reference dataset SHA-256 does not match matched-run provenance",
-                )
+            matched_run = _matched_run_manifests(
+                ctx,
+                evidence,
+                candidate_hash,
+                reference_hash,
+            )
             passed, max_abs_error, max_relative_error = _compare_adequacy_datasets(
                 candidate_dataset, reference_dataset, rtol, atol
             )
@@ -438,10 +447,16 @@ def _audit_fp32_adequacy(
             "matched_run": {
                 "candidate_run_id": matched_run["candidate_run_id"],
                 "reference_run_id": matched_run["reference_run_id"],
-                "inputs_sha256": matched_run["candidate_inputs_sha256"],
+                "candidate_manifest": matched_run["candidate_manifest"],
+                "reference_manifest": matched_run["reference_manifest"],
+                "inputs_sha256": matched_run["inputs_sha256"],
                 "candidate_precision": "float32",
                 "reference_precision": "float64",
-                "declared_changes": ["precision"],
+                "derived_change_projection": [
+                    "numerics.precision",
+                    "environment.real_dtype",
+                    "environment.complex_dtype",
+                ],
                 "candidate_dataset_sha256": candidate_hash,
                 "reference_dataset_sha256": reference_hash,
             },
@@ -450,62 +465,345 @@ def _audit_fp32_adequacy(
     )
 
 
-def _matched_run_provenance(evidence: Mapping[str, Any]) -> dict[str, str]:
+def _matched_run_manifests(
+    ctx: GateContext,
+    evidence: Mapping[str, Any],
+    candidate_dataset_sha256: str,
+    reference_dataset_sha256: str,
+) -> dict[str, str]:
     code = "BLOCK_FP32_ADEQUACY_EVIDENCE"
     matched = _mapping(
         evidence.get("matched_run"),
         "numerics.fp32_adequacy_evidence.matched_run",
         code,
     )
-    candidate_run_id = _required_text(
-        matched, "candidate_run_id", "matched_run.candidate_run_id", code
-    ).strip()
-    reference_run_id = _required_text(
-        matched, "reference_run_id", "matched_run.reference_run_id", code
-    ).strip()
-    if candidate_run_id == reference_run_id:
-        raise _PrecisionAuditError(code, "matched FP32 and FP64 runs must have distinct run IDs")
-    candidate_inputs_hash = _required_sha256(
-        matched, "candidate_inputs_sha256", "matched_run.candidate_inputs_sha256"
-    )
-    reference_inputs_hash = _required_sha256(
-        matched, "reference_inputs_sha256", "matched_run.reference_inputs_sha256"
-    )
-    if candidate_inputs_hash != reference_inputs_hash:
+    required_keys = {"candidate_manifest", "reference_manifest"}
+    if set(matched) != required_keys:
         raise _PrecisionAuditError(
-            code, "matched FP32 and FP64 runs must have identical input SHA-256 values"
+            code,
+            "matched_run must contain only candidate_manifest and reference_manifest",
         )
-    candidate_precision = _required_text(
-        matched, "candidate_precision", "matched_run.candidate_precision", code
-    ).strip().lower()
-    reference_precision = _required_text(
-        matched, "reference_precision", "matched_run.reference_precision", code
-    ).strip().lower()
-    if candidate_precision != "float32" or reference_precision != "float64":
+    candidate_ref = _required_text(
+        matched, "candidate_manifest", "matched_run.candidate_manifest", code
+    ).strip()
+    reference_ref = _required_text(
+        matched, "reference_manifest", "matched_run.reference_manifest", code
+    ).strip()
+    candidate_path = _resolve_project_regular_file(ctx.project_root, candidate_ref, code)
+    reference_path = _resolve_project_regular_file(ctx.project_root, reference_ref, code)
+    if candidate_path == reference_path:
+        raise _PrecisionAuditError(code, "matched-run manifests must be distinct files")
+
+    candidate = _validated_run_manifest(
+        ctx,
+        candidate_path,
+        expected_precision="float32",
+        expected_dataset_sha256=candidate_dataset_sha256,
+    )
+    reference = _validated_run_manifest(
+        ctx,
+        reference_path,
+        expected_precision="float64",
+        expected_dataset_sha256=reference_dataset_sha256,
+    )
+    if candidate["run_id"] == reference["run_id"]:
+        raise _PrecisionAuditError(code, "matched FP32 and FP64 manifests need distinct run IDs")
+    try:
+        shared_output = candidate["output_path"].samefile(reference["output_path"])
+    except OSError as error:
         raise _PrecisionAuditError(
-            code, "matched-run precision must change from float32 candidate to float64 reference"
+            code, "matched-run output identity could not be verified"
+        ) from error
+    if shared_output:
+        raise _PrecisionAuditError(code, "matched runs must have distinct HDF5 output files")
+    if candidate["receiver_dataset"] != reference["receiver_dataset"]:
+        raise _PrecisionAuditError(
+            code, "matched runs must bind the same receiver dataset path"
         )
-    declared_changes = matched.get("declared_changes")
-    if not isinstance(declared_changes, Sequence) or isinstance(
-        declared_changes, (str, bytes)
+    if candidate["inputs"] != reference["inputs"]:
+        raise _PrecisionAuditError(code, "matched-run canonical input hash maps must be identical")
+    if candidate["inputs_sha256"] != reference["inputs_sha256"]:
+        raise _PrecisionAuditError(code, "matched-run canonical input-set hashes must be identical")
+    if not _strict_json_equal(
+        candidate["nonprecision_numerics"], reference["nonprecision_numerics"]
     ):
-        raise _PrecisionAuditError(code, "matched_run.declared_changes must be a sequence")
-    if tuple(declared_changes) != ("precision",):
         raise _PrecisionAuditError(
-            code, "precision must be the sole declared matched-run change"
+            code, "matched-run numerics may differ only in precision"
+        )
+    if not _strict_json_equal(
+        candidate["nonprecision_environment"],
+        reference["nonprecision_environment"],
+    ):
+        raise _PrecisionAuditError(
+            code,
+            "matched-run environment may differ only in real_dtype and complex_dtype",
+        )
+    if candidate["command"] != reference["command"]:
+        raise _PrecisionAuditError(code, "matched-run commands must be identical")
+    if not _strict_json_equal(
+        candidate["stable_metadata"], reference["stable_metadata"]
+    ):
+        raise _PrecisionAuditError(
+            code, "matched-run metadata outside the allowed run projection must be identical"
         )
     return {
-        "candidate_run_id": candidate_run_id,
-        "reference_run_id": reference_run_id,
-        "candidate_inputs_sha256": candidate_inputs_hash,
-        "reference_inputs_sha256": reference_inputs_hash,
-        "candidate_dataset_sha256": _required_sha256(
-            matched, "candidate_dataset_sha256", "matched_run.candidate_dataset_sha256"
-        ),
-        "reference_dataset_sha256": _required_sha256(
-            matched, "reference_dataset_sha256", "matched_run.reference_dataset_sha256"
-        ),
+        "candidate_run_id": candidate["run_id"],
+        "reference_run_id": reference["run_id"],
+        "candidate_manifest": candidate_ref,
+        "reference_manifest": reference_ref,
+        "inputs_sha256": candidate["inputs_sha256"],
     }
+
+
+def _validated_run_manifest(
+    ctx: GateContext,
+    path: Path,
+    *,
+    expected_precision: str,
+    expected_dataset_sha256: str,
+) -> dict[str, Any]:
+    code = "BLOCK_FP32_ADEQUACY_EVIDENCE"
+    manifest = _read_strict_json_object(path, code)
+    raw_run_id = _required_text(manifest, "run_id", "run manifest run_id", code)
+    run_id = raw_run_id.strip()
+    if raw_run_id != run_id or path.stem != run_id:
+        raise _PrecisionAuditError(
+            code, "run manifest run_id must exactly match its manifest filename"
+        )
+    _required_text(manifest, "started_at", "run manifest started_at", code)
+    _required_text(manifest, "finished_at", "run manifest finished_at", code)
+    return_code = manifest.get("return_code")
+    if isinstance(return_code, bool) or not isinstance(return_code, int) or return_code != 0:
+        raise _PrecisionAuditError(code, "matched-run manifest return_code must be integer zero")
+
+    numerics = _mapping(manifest.get("numerics"), "run manifest numerics", code)
+    precision = _required_text(
+        numerics, "precision", "run manifest numerics.precision", code
+    ).strip()
+    if precision != expected_precision:
+        raise _PrecisionAuditError(
+            code, f"run manifest precision must be exactly {expected_precision}"
+        )
+    nonprecision_numerics = dict(numerics)
+    nonprecision_numerics.pop("precision")
+    nonprecision_environment = _validated_manifest_environment(
+        manifest, expected_precision, code
+    )
+    command = _validated_manifest_command(manifest, code)
+    run_variant_fields = {
+        "run_id",
+        "environment",
+        "command",
+        "return_code",
+        "numerics",
+        "inputs",
+        "inputs_sha256",
+        "outputs",
+        "started_at",
+        "finished_at",
+    }
+    stable_metadata = {
+        key: value for key, value in manifest.items() if key not in run_variant_fields
+    }
+
+    inputs = _validated_manifest_inputs(ctx.project_root, manifest, code)
+    inputs_sha256 = _required_sha256(manifest, "inputs_sha256", "run manifest inputs_sha256")
+    if inputs_sha256 != _canonical_hash_map_sha256(inputs):
+        raise _PrecisionAuditError(
+            code, "run manifest canonical input-set SHA-256 does not match its input map"
+        )
+
+    outputs = _mapping(manifest.get("outputs"), "run manifest outputs", code)
+    hdf5_ref = _required_text(outputs, "hdf5", "run manifest outputs.hdf5", code).strip()
+    dataset_ref = _required_text(
+        outputs,
+        "receiver_dataset",
+        "run manifest outputs.receiver_dataset",
+        code,
+    ).strip()
+    declared_dataset_hash = _required_sha256(
+        outputs,
+        "receiver_dataset_sha256",
+        "run manifest outputs.receiver_dataset_sha256",
+    )
+    output_path = _resolve_project_regular_file(ctx.project_root, hdf5_ref, code)
+    try:
+        with h5py.File(output_path, "r") as handle:
+            dataset = _local_nonvirtual_dataset(
+                handle, dataset_ref, code, "matched-run receiver dataset"
+            )
+            actual_dataset_hash = _dataset_sha256(dataset)
+    except _PrecisionAuditError:
+        raise
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        raise _PrecisionAuditError(code, f"matched-run HDF5 output is unreadable: {error}") from error
+    if declared_dataset_hash != actual_dataset_hash:
+        raise _PrecisionAuditError(code, "run manifest receiver dataset SHA-256 is incorrect")
+    if actual_dataset_hash != expected_dataset_sha256:
+        raise _PrecisionAuditError(
+            code, "run manifest receiver dataset does not match comparison evidence"
+        )
+    return {
+        "run_id": run_id,
+        "inputs": inputs,
+        "inputs_sha256": inputs_sha256,
+        "nonprecision_numerics": nonprecision_numerics,
+        "nonprecision_environment": nonprecision_environment,
+        "command": command,
+        "output_path": output_path,
+        "receiver_dataset": dataset_ref,
+        "stable_metadata": stable_metadata,
+    }
+
+
+def _validated_manifest_environment(
+    manifest: Mapping[str, Any], expected_precision: str, code: str
+) -> dict[str, Any]:
+    environment = _mapping(
+        manifest.get("environment"), "run manifest environment", code
+    )
+    for field in _RUN_MANIFEST_ENVIRONMENT_FIELDS:
+        _required_text(
+            environment,
+            field,
+            f"run manifest environment.{field}",
+            code,
+        )
+    expected_real, expected_complex = _RUN_MANIFEST_PRECISION_DTYPES[
+        expected_precision
+    ]
+    if (
+        environment["real_dtype"] != expected_real
+        or environment["complex_dtype"] != expected_complex
+    ):
+        raise _PrecisionAuditError(
+            code,
+            "run manifest environment dtypes do not match its declared precision",
+        )
+    return {
+        key: value
+        for key, value in environment.items()
+        if key not in {"real_dtype", "complex_dtype"}
+    }
+
+
+def _validated_manifest_command(
+    manifest: Mapping[str, Any], code: str
+) -> tuple[str, ...]:
+    command = manifest.get("command")
+    if not isinstance(command, list) or any(
+        not isinstance(argument, str) for argument in command
+    ):
+        raise _PrecisionAuditError(
+            code, "run manifest command must be a JSON array of strings"
+        )
+    return tuple(command)
+
+
+def _validated_manifest_inputs(
+    project_root: Path, manifest: Mapping[str, Any], code: str
+) -> dict[str, str]:
+    raw = _mapping(manifest.get("inputs"), "run manifest inputs", code)
+    if not raw:
+        raise _PrecisionAuditError(code, "run manifest inputs must be non-empty")
+    inputs: dict[str, str] = {}
+    for path_ref, declared_hash in raw.items():
+        if not isinstance(path_ref, str) or not path_ref or path_ref != path_ref.strip():
+            raise _PrecisionAuditError(
+                code, "run manifest input paths must be exact non-empty strings"
+            )
+        normalized_hash = _sha256_text(
+            declared_hash, f"run manifest inputs[{path_ref!r}]", code
+        )
+        input_path = _resolve_project_regular_file(project_root, path_ref, code)
+        actual_hash = _file_sha256(input_path)
+        if actual_hash != normalized_hash:
+            raise _PrecisionAuditError(
+                code, f"run manifest input SHA-256 is incorrect for {path_ref!r}"
+            )
+        inputs[path_ref] = normalized_hash
+    return inputs
+
+
+def _canonical_hash_map_sha256(value: Mapping[str, str]) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _strict_json_equal(left: object, right: object) -> bool:
+    def canonical(value: object) -> str:
+        return json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+
+    return canonical(left) == canonical(right)
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while block := handle.read(_MAX_HDF5_BLOCK_ELEMENTS):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _read_strict_json_object(path: Path, code: str) -> Mapping[str, Any]:
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError(f"duplicate JSON key {key!r}")
+            value[key] = item
+        return value
+
+    def reject_nonfinite_constant(value: str) -> None:
+        raise ValueError(f"non-finite JSON constant {value}")
+
+    try:
+        parsed = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=reject_nonfinite_constant,
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        raise _PrecisionAuditError(code, f"run manifest is not strict JSON: {error}") from error
+    if not isinstance(parsed, Mapping):
+        raise _PrecisionAuditError(code, "run manifest must be a JSON object")
+    return parsed
+
+
+def _resolve_project_regular_file(project_root: Path, path_ref: str, code: str) -> Path:
+    try:
+        root = project_root.resolve(strict=True)
+        raw_path = Path(path_ref)
+        candidate = raw_path if raw_path.is_absolute() else root / raw_path
+        lexical = Path(os.path.abspath(candidate))
+        relative = lexical.relative_to(root)
+        current = root
+        reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        for part in relative.parts:
+            current = current / part
+            metadata = current.lstat()
+            file_attributes = getattr(metadata, "st_file_attributes", 0)
+            if stat.S_ISLNK(metadata.st_mode) or file_attributes & reparse_flag:
+                raise _PrecisionAuditError(
+                    code, f"evidence path {path_ref!r} must not traverse symlinks or reparse points"
+                )
+        resolved = lexical.resolve(strict=True)
+        resolved.relative_to(root)
+        if not stat.S_ISREG(resolved.stat().st_mode):
+            raise _PrecisionAuditError(code, f"evidence path {path_ref!r} must be a regular file")
+        return resolved
+    except _PrecisionAuditError:
+        raise
+    except (OSError, RuntimeError, ValueError) as error:
+        raise _PrecisionAuditError(
+            code, f"evidence path {path_ref!r} must be a regular file under project_root"
+        ) from error
 
 
 def _audit_precision_floor(
@@ -599,6 +897,10 @@ def _local_nonvirtual_dataset(
             raise _PrecisionAuditError(code, f"{label} must resolve to an HDF5 dataset")
         if value.is_virtual:
             raise _PrecisionAuditError(code, f"{label} must not be a virtual HDF5 dataset")
+        if value.external:
+            raise _PrecisionAuditError(
+                code, f"{label} must not use HDF5 external raw storage"
+            )
         return value
     raise _PrecisionAuditError(code, f"{label} {dataset_ref!r} is missing")
 
@@ -766,7 +1068,13 @@ def _required_text(value: Mapping[str, Any], key: str, path: str, code: str) -> 
 
 def _required_sha256(value: Mapping[str, Any], key: str, path: str) -> str:
     code = "BLOCK_FP32_ADEQUACY_EVIDENCE"
-    raw = _required_text(value, key, path, code).strip().lower()
+    return _sha256_text(value.get(key), path, code)
+
+
+def _sha256_text(value: object, path: str, code: str) -> str:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise _PrecisionAuditError(code, f"{path} must be an exact SHA-256 hex digest")
+    raw = value.lower()
     if len(raw) != 64 or any(character not in "0123456789abcdef" for character in raw):
         raise _PrecisionAuditError(code, f"{path} must be a 64-character SHA-256 hex digest")
     return raw
