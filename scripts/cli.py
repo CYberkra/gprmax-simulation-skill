@@ -16,6 +16,7 @@ from scripts.fidelity import FidelityLevel, PromotionDecision, can_promote
 from scripts.gates import GateContractError, GateRegistry, run_stage, write_gate_report
 import scripts.materials as materials
 import scripts.probe_environment as probe
+import scripts.wizard as wizard
 from scripts.scaffold import describe_layout, create_study_skeleton
 
 
@@ -266,7 +267,56 @@ def _parser() -> argparse.ArgumentParser:
     promote.add_argument("--project-root", type=Path, required=True)
     promote.add_argument("--skip-reason")
     promote.add_argument("--allow-conditional", action="store_true")
+
+    wcmd = commands.add_parser("wizard")
+    wsub = wcmd.add_subparsers(dest="wizard_command", required=True)
+    wsub.add_parser("init").add_argument("session", type=Path)
+    wanswer = wsub.add_parser("answer")
+    wanswer.add_argument("session", type=Path)
+    wanswer.add_argument("field", type=str)
+    wanswer.add_argument("value", type=str)
+    wback = wsub.add_parser("back")
+    wback.add_argument("session", type=Path)
+    wback.add_argument("--steps", type=int, default=1)
+    wsub.add_parser("status").add_argument("session", type=Path)
+    wdump = wsub.add_parser("dump")
+    wdump.add_argument("session", type=Path)
+    wdump.add_argument("--out", type=Path)
     return parser
+
+
+def _wizard_answer(session_path: Path, field: str, value: str) -> int:
+    session = wizard.load_session(session_path)
+    try:
+        validated = wizard.answer(session, field, value)
+    except wizard.WizardError as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
+    print(f"{field} = {validated!r}")
+    return 0
+
+
+def _wizard_status(session_path: Path) -> int:
+    session = wizard.load_session(session_path)
+    import json as _json
+
+    print(_json.dumps(wizard.status(session), indent=2, ensure_ascii=False))
+    return 0
+
+
+def _wizard_dump(session_path: Path, out: Path | None) -> int:
+    session = wizard.load_session(session_path)
+    payload = wizard.dump(session)
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(
+            __import__("yaml").safe_dump(payload, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+        print(f"dump written -> {out}")
+    else:
+        print(__import__("yaml").safe_dump(payload, sort_keys=False, allow_unicode=True), end="")
+    return 0
 
 
 def _resolve_materials_dir(args: argparse.Namespace) -> Path:
@@ -302,6 +352,27 @@ def main(argv: list[str] | None = None) -> int:
             args.skip_reason,
             args.allow_conditional,
         )
+    if args.command == "wizard":
+        if args.wizard_command == "init":
+            wizard.create_session(args.session)
+            print(f"wizard session created -> {args.session}")
+            return 0
+        if args.wizard_command == "answer":
+            return _wizard_answer(args.session, args.field, args.value)
+        if args.wizard_command == "back":
+            session = wizard.load_session(args.session)
+            try:
+                removed = wizard.back(session, args.steps)
+            except wizard.WizardError as error:
+                print(f"BLOCK {error}", file=sys.stderr)
+                return 2
+            print(f"removed: {removed}")
+            return 0
+        if args.wizard_command == "status":
+            return _wizard_status(args.session)
+        if args.wizard_command == "dump":
+            return _wizard_dump(args.session, args.out)
+        raise AssertionError(f"unhandled wizard command: {args.wizard_command}")
     raise AssertionError(f"unhandled command: {args.command}")
 
 
