@@ -20,9 +20,15 @@ def test_axis_by_id_unknown_raises():
         axes.axis_by_id("nope")
 
 
+def test_antenna_option_spelling_is_hertzian():
+    ids = {option.id for option in axes.axis_by_id("antenna").options}
+    assert "ideal_hertzian" in ids
+    assert "ideal_herzian" not in ids
+
+
 def test_recommend_quick_defaults():
     rec = axes.recommend("other", "quick")
-    assert rec["antenna"]["option"] == "ideal_herzian"
+    assert rec["antenna"]["option"] == "ideal_hertzian"
     assert rec["geometry"]["option"] == "L1"
     assert rec["noise"]["option"] == "none"
     assert rec["precision"]["option"] == "fp32"
@@ -53,11 +59,29 @@ def test_recommend_explicit_wins():
     assert rec["antenna"]["rationale"] == "用户明确指定，优先执行"
 
 
+def test_recommend_explicit_rejects_unknown_option():
+    with pytest.raises(ValueError):
+        axes.recommend("other", "quick", explicit={"antenna": "not_an_option"})
+
+
+def test_recommend_explicit_rejects_unknown_axis():
+    with pytest.raises(KeyError):
+        axes.recommend("other", "quick", explicit={"bogus": "x"})
+
+
 def test_recommend_rejects_bad_inputs():
     with pytest.raises(ValueError):
         axes.recommend("unknown_scenario", "quick")
     with pytest.raises(ValueError):
         axes.recommend("other", "ultra")
+
+
+def test_precision_marker_has_no_fixed_constant():
+    marker = axes.axis_by_id("precision").marker
+    assert marker is not None
+    assert "90" not in marker
+    assert "110" not in marker
+    assert "1.8" not in marker
 
 
 def test_markers_for_sfcw_on():

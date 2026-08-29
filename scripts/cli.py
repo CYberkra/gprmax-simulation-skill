@@ -270,7 +270,9 @@ def _parser() -> argparse.ArgumentParser:
 
     wcmd = commands.add_parser("wizard")
     wsub = wcmd.add_subparsers(dest="wizard_command", required=True)
-    wsub.add_parser("init").add_argument("session", type=Path)
+    winit = wsub.add_parser("init")
+    winit.add_argument("session", type=Path)
+    winit.add_argument("--force", action="store_true")
     wanswer = wsub.add_parser("answer")
     wanswer.add_argument("session", type=Path)
     wanswer.add_argument("field", type=str)
@@ -306,7 +308,11 @@ def _wizard_status(session_path: Path) -> int:
 
 def _wizard_dump(session_path: Path, out: Path | None) -> int:
     session = wizard.load_session(session_path)
-    payload = wizard.dump(session)
+    try:
+        payload = wizard.dump(session)
+    except wizard.WizardError as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
     if out is not None:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(
@@ -354,7 +360,11 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "wizard":
         if args.wizard_command == "init":
-            wizard.create_session(args.session)
+            try:
+                wizard.create_session(args.session, force=args.force)
+            except wizard.WizardError as error:
+                print(f"BLOCK {error}", file=sys.stderr)
+                return 2
             print(f"wizard session created -> {args.session}")
             return 0
         if args.wizard_command == "answer":

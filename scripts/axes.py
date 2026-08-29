@@ -49,7 +49,7 @@ AXES: tuple[Axis, ...] = (
         label="天线模型",
         question="用什么天线模型？",
         options=(
-            Option("ideal_herzian", "理想赫兹偶极", "点源近似，最低成本，适合趋势研究"),
+            Option("ideal_hertzian", "理想赫兹偶极", "点源近似，最低成本，适合趋势研究"),
             Option("physical", "实体天线", "物理天线（如宽带折叠/贴片），成本高，接近实装"),
             Option("plane_wave", "平面波注入", "无天线，只关心体传播，不关心收发耦合"),
         ),
@@ -107,15 +107,25 @@ AXES: tuple[Axis, ...] = (
     Axis(
         id="precision",
         label="数值精度",
-        question="fp32 还是 fp64？（通常自动决策）",
+        question="fp32 还是 fp64？",
         options=(
-            Option("fp32", "fp32", "默认；数值地板约 −90 dB，适合常规动态范围"),
-            Option("fp64", "fp64", "需求动态范围 > ~110 dB 时必须；耗时约 1.8×"),
+            Option("fp32", "fp32", "默认；适用常规动态范围（以精度试验为准）"),
+            Option("fp64", "fp64", "高动态范围/弱信号场景；按精度试验与硬件决定"),
         ),
         dependents=("resources",),
-        marker="由需求动态范围自动决策：>110 dB 必须 fp64",
+        marker="fp32 数值地板与所需动态范围由匹配的精度试验和具体硬件决定，不留常数",
     ),
 )
+
+
+def _validate_option(axis_id: str, option: str) -> str:
+    axis = axis_by_id(axis_id)
+    ids = {item.id for item in axis.options}
+    if option not in ids:
+        raise ValueError(
+            f"axis {axis_id!r}: unknown option {option!r} (choose from {sorted(ids)})"
+        )
+    return option
 
 
 def axis_by_id(axis_id: str) -> Axis:
@@ -126,8 +136,8 @@ def axis_by_id(axis_id: str) -> Axis:
 
 
 def _fidelity_option(axis_id: str, fidelity: str) -> str:
-    quick = {"antenna": "ideal_herzian", "geometry": "L1", "noise": "none"}
-    standard = {"antenna": "ideal_herzian", "geometry": "L3", "noise": "none"}
+    quick = {"antenna": "ideal_hertzian", "geometry": "L1", "noise": "none"}
+    standard = {"antenna": "ideal_hertzian", "geometry": "L3", "noise": "none"}
     publication = {"antenna": "physical", "geometry": "L4", "noise": "awgn"}
     table = {"quick": quick, "standard": standard, "publication": publication}
     return table.get(fidelity, standard).get(axis_id, "")
@@ -141,14 +151,17 @@ def recommend(
 ) -> dict[str, dict[str, str]]:
     """Return per-axis recommendations: {axis_id: {option, rationale}}.
 
-    ``explicit`` may pin an axis (user's own choice wins). Special needs:
-    ``needs_sfcw`` pins the sfcw axis and strengthens geometry for coherence.
+    ``explicit`` may pin an axis (a user's own choice wins) and is validated
+    against the axis options. Special needs: ``needs_sfcw`` pins the sfcw
+    axis and strengthens geometry for coherence.
     """
     if scenario not in SCENARIOS:
         raise ValueError(f"scenario must be one of {SCENARIOS}")
     if fidelity not in FIDELITY_INTENTS:
         raise ValueError(f"fidelity must be one of {FIDELITY_INTENTS}")
     explicit = explicit or {}
+    for axis_id, option in explicit.items():
+        _validate_option(axis_id, option)
 
     recommended: dict[str, dict[str, str]] = {}
     for axis in AXES:
@@ -166,7 +179,7 @@ def recommend(
         elif axis.id == "precision":
             option = "fp32"
             rationale = (
-                "默认 fp32；若需求动态范围 >~110 dB 需改 fp64（自动决策点）"
+                "默认 fp32；动态范围需求改 fp64 需由精度试验与硬件决定（无固定常数）"
             )
         elif axis.id == "sfcw":
             option = _fidelity_option(axis.id, fidelity) or "off"

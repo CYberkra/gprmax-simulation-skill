@@ -5,14 +5,21 @@ step progress, validated answers, back support, and a final dump that produces
 the answers record, the per-axis recommendations, dependency markers, a
 numerics report, and a simulation_contract.yaml draft.
 
-Sessions are plain directories holding a `session.json` state file, so a
-session can be saved and resumed later (intermediate state is preserved).
+Discipline:
+- no placeholder values: numerics are computed only from confirmed inputs,
+  otherwise the report is absent/UNKNOWN and the caller is told why;
+- scan factors are declared explicitly by the user, never inferred from
+  ordinary model parameters;
+- `dump` validates band format, axis options, numeric ranges, and session
+  completeness before producing anything;
+- `init` never overwrites an existing session without `--force`.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -29,6 +36,28 @@ STEPS: tuple[str, ...] = (
     "environment",
 )
 
+_BAND_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*$")
+
+# Fields that must be answered before a dump is allowed.
+REQUIRED_FIELDS = (
+    "scenario_type",
+    "target_depth_m",
+    "target_material",
+    "medium_material",
+    "needs_sfcw",
+    "band_mhz",
+    "fidelity",
+    "run_env",
+)
+# Optional fields that refine numerics but never block a dump.
+OPTIONAL_FIELDS = {
+    "domain_m",
+    "pml_layers",
+    "medium_eps_r",
+    "custom_cells_m",
+    "scan_factors",
+}
+
 STEP_FIELDS: dict[str, dict[str, Any]] = {
     "scenario": {
         "question": "场景类型与目标深度？",
@@ -38,6 +67,16 @@ STEP_FIELDS: dict[str, dict[str, Any]] = {
                 "choices": axes.SCENARIOS,
             },
             "target_depth_m": {"label": "目标埋深/距离 (m)", "type": "number"},
+            "domain_m": {
+                "label": "域尺寸 x,y,z (m，可选)",
+                "type": "triple",
+                "optional": True,
+            },
+            "pml_layers": {
+                "label": "PML 层数（可选）",
+                "type": "int",
+                "optional": True,
+            },
         },
     },
     "target_medium": {
@@ -45,19 +84,34 @@ STEP_FIELDS: dict[str, dict[str, Any]] = {
         "fields": {
             "target_material": {"label": "目标材料", "type": "str"},
             "medium_material": {"label": "围岩介质", "type": "str"},
+            "medium_eps_r": {
+                "label": "围岩 ε_r（可选，供数值核算）",
+                "type": "number",
+                "optional": True,
+            },
+            "scan_factors": {
+                "label": "扫描因素（逗号分隔，空=单变量；可选）",
+                "type": "factors",
+                "optional": True,
+            },
         },
     },
     "band_mode": {
         "question": "频段与体制？",
         "fields": {
             "needs_sfcw": {"label": "需要 SFCW 体制结论", "type": "bool"},
-            "band_mhz": {"label": "频率范围 (如 20-300)", "type": "str"},
+            "band_mhz": {"label": "频率范围 (如 20-300)", "type": "band"},
         },
     },
     "fidelity": {
         "question": "拟真度取向？",
         "fields": {
             "fidelity": {"label": "拟真度", "choices": axes.FIDELITY_INTENTS},
+            "custom_cells_m": {
+                "label": "自定义网格 dx,dy,dz (m，可选)",
+                "type": "triple",
+                "optional": True,
+            },
         },
     },
     "environment": {
@@ -88,16 +142,13 @@ class Session:
                 return index
         raise WizardError(f"unknown field: {field!r}")
 
-    def answered(self, field: str) -> bool:
-        return field in self.answers
-
-    def remaining_fields(self) -> list[str]:
+    def remaining_fields(self, required_only: bool = False) -> list[str]:
         done = set(self.answers)
         return [
             field
             for step in STEPS
-            for field in STEP_FIELDS[step]["fields"]
-            if field not in done
+            for field, spec in STEP_FIELDS[step]["fields"].items()
+            if field not in done and (not required_only or not spec.get("optional"))
         ]
 
     def incomplete_steps(self) -> list[str]:
@@ -105,14 +156,18 @@ class Session:
             step
             for step in STEPS
             if any(
-                field not in self.answers
-                for field in STEP_FIELDS[step]["fields"]
+                field not in self.answers and not spec.get("optional")
+                for field, spec in STEP_FIELDS[step]["fields"].items()
             )
         ]
 
 
-def create_session(path: Path) -> Session:
+def create_session(path: Path, force: bool = False) -> Session:
     session = Session(Path(path))
+    if session.state_path.exists() and not force:
+        raise WizardError(
+            f"session already exists at {session.state_path} (use force=True to reset)"
+        )
     session.path.mkdir(parents=True, exist_ok=True)
     save_session(session)
     return session
@@ -136,13 +191,47 @@ def save_session(session: Session) -> None:
     )
 
 
+def _parse_band(value: str) -> tuple[float, float]:
+    match = _BAND_PATTERN.match(value)
+    if not match:
+        raise WizardError(
+            f"band_mhz must be '<low>-<high>' with positive numbers, got {value!r}"
+        )
+    low, high = float(match.group(1)), float(match.group(2))
+    if not (0 < low < high):
+        raise WizardError(f"band_mhz must satisfy 0 < low < high, got {value!r}")
+    return low, high
+
+
+def _parse_triple(value: Any) -> tuple[float, float, float]:
+    try:
+        if isinstance(value, (tuple, list)) and len(value) == 3:
+            parts = tuple(float(item) for item in value)
+        else:
+            parts = tuple(
+                float(part) for part in str(value).replace(" ", "").split(",")
+            )
+    except (TypeError, ValueError) as error:
+        raise WizardError(f"expected three positive numbers 'x,y,z', got {value!r}") from error
+    if len(parts) != 3 or not all(math.isfinite(v) and v > 0 for v in parts):
+        raise WizardError(
+            f"expected three positive numbers 'x,y,z', got {value!r}"
+        )
+    return parts
+
+
 def _validate_answer(field: str, value: Any, spec: Mapping[str, Any]) -> Any:
     kind = spec.get("type")
     if kind == "number":
-        number = float(value)  # raises ValueError -> WizardError below
+        number = float(value)
         if not math.isfinite(number) or number < 0:
             raise WizardError(f"{field}: must be a non-negative finite number")
         return number
+    if kind == "int":
+        integer = int(value)
+        if integer <= 0:
+            raise WizardError(f"{field}: must be a positive integer")
+        return integer
     if kind == "bool":
         if isinstance(value, bool):
             return value
@@ -153,6 +242,17 @@ def _validate_answer(field: str, value: Any, spec: Mapping[str, Any]) -> Any:
             if lowered in ("false", "no", "0", "n"):
                 return False
         raise WizardError(f"{field}: expected a boolean")
+    if kind == "band":
+        low, high = _parse_band(str(value))
+        return f"{low:g}-{high:g}"
+    if kind == "triple":
+        return _parse_triple(value)
+    if kind == "factors":
+        if isinstance(value, (list, tuple)):
+            factors = [str(item).strip() for item in value]
+        else:
+            factors = [item.strip() for item in str(value).split(",") if item.strip()]
+        return factors
     choices = spec.get("choices")
     if choices is not None:
         if value not in choices:
@@ -191,13 +291,43 @@ def back(session: Session, steps: int = 1) -> list[str]:
 
 
 def status(session: Session) -> dict[str, Any]:
-    remaining = session.remaining_fields()
+    remaining = session.remaining_fields(required_only=True)
     return {
         "complete": not remaining,
-        "remaining_fields": remaining,
+        "remaining_required_fields": remaining,
         "incomplete_steps": session.incomplete_steps(),
         "answered": sorted(session.answers),
     }
+
+
+def validate_for_dump(session: Session) -> list[str]:
+    """Re-validate every stored answer and session completeness.
+
+    Returns a list of problems; empty means the session is dump-ready. This
+    re-checks fields even if session.json was hand-edited.
+    """
+    problems: list[str] = []
+    for field in REQUIRED_FIELDS:
+        step_index = session.field_index(field)
+        spec = STEP_FIELDS[STEPS[step_index]]["fields"][field]
+        if field not in session.answers:
+            problems.append(f"missing required field: {field}")
+            continue
+        try:
+            _validate_answer(field, session.answers[field], spec)
+        except WizardError as error:
+            problems.append(str(error))
+    for field in OPTIONAL_FIELDS:
+        if field not in session.answers:
+            continue
+        step_index = session.field_index(field)
+        spec = STEP_FIELDS[STEPS[step_index]]["fields"][field]
+        try:
+            validated = _validate_answer(field, session.answers[field], spec)
+            session.answers[field] = validated
+        except WizardError as error:
+            problems.append(str(error))
+    return problems
 
 
 def _recommendations(session: Session) -> dict[str, dict[str, str]]:
@@ -208,37 +338,56 @@ def _recommendations(session: Session) -> dict[str, dict[str, str]]:
 
 
 def _numerics_from_answers(session: Session) -> dict[str, Any] | None:
-    """Build a numerics report if the numeric inputs are present."""
+    """Compute numerics only from *confirmed* inputs.
+
+    Returns None (with a reason attached to the caller) if any required
+    numeric input is missing. ``window`` is derived from the two-way travel
+    with a stated 1.5× margin — a declared rule, not a placeholder material
+    value; PML is reported only when ``pml_layers`` was given.
+    """
+    missing: list[str] = []
+    medium_eps_r = session.answers.get("medium_eps_r")
+    if medium_eps_r is None:
+        missing.append("medium_eps_r")
+    cells_m = session.answers.get("custom_cells_m")
+    if cells_m is None:
+        missing.append("custom_cells_m")
+    domain_m = session.answers.get("domain_m")
+    if domain_m is None:
+        missing.append("domain_m")
+    if missing:
+        return None
 
     try:
-        target_depth_m = float(session.answers["target_depth_m"])
-    except (KeyError, TypeError, ValueError):
+        eps_r = float(medium_eps_r)  # type: ignore[arg-type]
+        band = str(session.answers.get("band_mhz", ""))
+        low_hz, high_hz = (float(part) * 1e6 for part in band.split("-"))
+        target_distance_m = float(session.answers["target_depth_m"])
+    except (TypeError, ValueError, KeyError):
         return None
-    band = str(session.answers.get("band_mhz", "") or "")
-    if not band or "-" not in band:
-        return None
-    try:
-        low, high = (float(part) for part in band.replace(" ", "").split("-", 1))
-    except ValueError:
-        return None
-    eps_r = 4.0  # placeholder until material research resolves the medium
-    dx_m = 0.05  # placeholder until mesh strategy is chosen
-    domain_m = (60.0, 16.0, 7.0)  # placeholder domain
-    window_s = 2 * target_depth_m / numerics.phase_velocity_m_s(eps_r) * 1.5
-    return numerics.numerics_report(
+
+    two_way = numerics.two_way_travel_s(target_distance_m, eps_r)
+    window_s = two_way * 1.5  # stated margin rule
+    pml_layers = session.answers.get("pml_layers")
+    report = numerics.numerics_report(
         eps_r=eps_r,
-        max_frequency_hz=high * 1e6,
-        dx_m=dx_m,
-        domain_m=domain_m,
-        target_distance_m=target_depth_m,
+        max_frequency_hz=high_hz,
+        cells_m=cells_m,  # type: ignore[arg-type]
+        domain_m=tuple(domain_m),  # type: ignore[arg-type]
+        target_distance_m=target_distance_m,
         window_s=window_s,
-        pml_layers=10,
+        pml_layers=pml_layers if pml_layers is not None else 10,
     )
+    report["window"]["derived_from"] = "two-way travel × 1.5 (stated margin rule)"
+    return report
 
 
 def dump(session: Session) -> dict[str, Any]:
-    """Produce the full setup dump: answers, recommendations, markers,
-    numerics report, and a contract draft."""
+    """Validate, then produce the full setup dump."""
+    problems = validate_for_dump(session)
+    if problems:
+        raise WizardError("; ".join(problems))
+
     recommendations = _recommendations(session)
     chosen = {axis: rec["option"] for axis, rec in recommendations.items()}
     markers = axes.markers_for(chosen)
@@ -248,6 +397,11 @@ def dump(session: Session) -> dict[str, Any]:
         "recommendations": recommendations,
         "dependency_markers": markers,
         "numerics": report,
+        "numerics_unknown_reason": (
+            None
+            if report is not None
+            else "numeric inputs incomplete (need medium_eps_r, custom_cells_m, domain_m)"
+        ),
         "contract_draft": _contract_draft(session, recommendations),
     }
 
@@ -255,15 +409,13 @@ def dump(session: Session) -> dict[str, Any]:
 def _contract_draft(
     session: Session, recommendations: Mapping[str, Mapping[str, str]]
 ) -> dict[str, Any]:
+    factors = list(session.answers.get("scan_factors", []))
     return {
         "project": {
-            "design_type": (
-                "multi_factor"
-                if len(_factor_like_answers(session)) > 1
-                else "single_variable"
-            ),
-            "factors": _factor_like_answers(session),
+            "design_type": "multi_factor" if factors else "single_variable",
+            "factors": factors,
             "invariants": [],
+            "note": "factors declared by the user; other parameters are fixed controls",
         },
         "task": {
             "objective": session.answers.get("scenario_type", "other"),
@@ -286,13 +438,13 @@ def _contract_draft(
             "precision_requirement": recommendations.get("precision", {}).get(
                 "option", "fp32"
             ),
-            "pml_layers": 10,
-            "note": "cells/λ, CFL, window coverage: see numerics report",
+            "pml_layers": session.answers.get("pml_layers", "unknown"),
+            "note": "cells/λ, CFL, window coverage: see numerics report (UNKNOWN until inputs confirmed)",
         },
         "geometry": {
             "target_level": recommendations.get("geometry", {}).get("option", "L1"),
             "antenna": recommendations.get("antenna", {}).get(
-                "option", "ideal_herzian"
+                "option", "ideal_hertzian"
             ),
             "noise": recommendations.get("noise", {}).get("option", "none"),
         },
@@ -305,22 +457,7 @@ def chosen_sfcw(recommendations: Mapping[str, Mapping[str, str]]) -> bool:
     return recommendations.get("sfcw", {}).get("option") == "on"
 
 
-def _factor_like_answers(session: Session) -> list[str]:
-    return [
-        field
-        for field in (
-            "target_depth_m",
-            "band_mhz",
-            "target_material",
-            "medium_material",
-        )
-        if field in session.answers
-    ]
-
-
 def dump_to_yaml(session: Session) -> str:
     import yaml
 
-    return yaml.safe_dump(
-        dump(session), sort_keys=False, allow_unicode=True
-    )
+    return yaml.safe_dump(dump(session), sort_keys=False, allow_unicode=True)
