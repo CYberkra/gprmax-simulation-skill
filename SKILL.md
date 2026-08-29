@@ -90,6 +90,23 @@ paths. Confirm that the selected build and allocated hardware support the
 requested calculation. Stop on a repeated simulation error; do not silently
 substitute a different precision or model.
 
+## Respect fidelity and gate states
+
+Interpret every check through the shared gate vocabulary:
+`PASS` / `PASS_WITH_LIMITATION` / `BLOCK` / `STALE` / `NOT_APPLICABLE` for
+gates, and `UNVERIFIED` / `CONDITIONAL` / `VERIFIED` / `REJECTED` / `STALE` for
+claims. A blocked or stale gate stops promotion; an upstream change invalidates
+downstream evidence to `STALE` until revalidated. Never treat a stale result as
+current.
+
+Claims license only the fidelity they earn: `F0` analytic sanity, `F1` minimal
+numerical physics, `F2` reduced-dimensional propagation, `F3` simplified 3-D,
+`F4` high-fidelity 3-D physical model, `F5` calibrated hardware/system closure.
+Sign-off requires the claim's minimum fidelity (for example engineering
+detection needs `F5`, physical resolution needs `F4`). Read
+[gates-and-claims.md](references/gates-and-claims.md) before interpreting any
+gate report or signing a claim.
+
 ## Audit outputs before interpreting them
 
 Confirm the declared receiver dataset exists, is finite and nonempty, and has

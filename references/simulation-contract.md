@@ -18,6 +18,13 @@ Create a concise machine-readable or human-readable contract containing:
 - intended processing chain and any SFCW tone grid, source reference, range
   datum, or calibration reference.
 
+The canonical machine-readable form is validated against
+`schemas/simulation_contract.schema.json`, with `templates/simulation_contract.yaml`
+as the starting skeleton and `templates/model_purpose.yaml` for the claim
+statement (allowed vs forbidden claims). The schema is contract-first: new
+fields (for example batch `scan:` dimensions, fidelity intent, material
+`condition`) are added to the schema before any consumer depends on them.
+
 Record the actual discretised values separately from nominal values. A declared
 dimension is not necessarily representable on a Yee grid.
 

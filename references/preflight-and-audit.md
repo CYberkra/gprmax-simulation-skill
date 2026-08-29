@@ -16,6 +16,9 @@ outputs before analysis.
 4. Run supplied focused geometry/configuration tests from the artifact root; do
    not place costly gprMax execution in the test suite.
 5. Verify compatible target/background inputs before a comparison is authorised.
+6. Run a waveform parse smoke for every custom excitation file: expected header,
+   sample duration covering the simulation time window, and explicit fill value
+   (see [source-and-sfcw.md](source-and-sfcw.md)).
 
 ## Execution record
 

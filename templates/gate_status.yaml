@@ -1,0 +1,7 @@
+results:
+  - gate_id: example_gate
+    state: NOT_APPLICABLE
+    code: NOT_APPLICABLE
+    summary: No gate result has been recorded for this template.
+    evidence: []
+    invalidates: []

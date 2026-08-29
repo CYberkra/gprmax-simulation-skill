@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Simulation Run Manifest",
+  "type": "object",
+  "required": [
+    "run_id",
+    "input_root",
+    "primary_input",
+    "environment",
+    "command",
+    "inputs",
+    "inputs_sha256",
+    "numerics",
+    "outputs",
+    "started_at",
+    "finished_at",
+    "return_code"
+  ],
+  "properties": {
+    "run_id": {"type": "string", "minLength": 1},
+    "input_root": {"$ref": "#/$defs/projectRelativePosixPath"},
+    "primary_input": {"$ref": "#/$defs/projectRelativePosixPath"},
+    "environment": {"$ref": "#/$defs/environment"},
+    "command": {"type": "array", "items": {"type": "string"}},
+    "inputs": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"$ref": "#/$defs/projectRelativePosixPath"},
+      "additionalProperties": {"$ref": "#/$defs/sha256"}
+    },
+    "inputs_sha256": {"$ref": "#/$defs/sha256"},
+    "numerics": {"type": "object", "additionalProperties": true},
+    "outputs": {
+      "type": "object",
+      "required": ["hdf5", "receiver_dataset", "receiver_dataset_sha256"],
+      "properties": {
+        "hdf5": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "receiver_dataset": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "receiver_dataset_sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": true
+    },
+    "started_at": {"type": "string", "minLength": 1},
+    "finished_at": {"type": "string", "minLength": 1},
+    "return_code": {"type": "integer"}
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "projectRelativePosixPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*//)(?!.*\\s)[^/]+(?:/[^/]+)*$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9A-Fa-f]{64}$"
+    },
+    "environment": {
+      "type": "object",
+      "required": [
+        "gprmax_version",
+        "banner",
+        "import_path",
+        "backend",
+        "real_dtype",
+        "complex_dtype"
+      ],
+      "properties": {
+        "gprmax_version": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "banner": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "import_path": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "backend": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "real_dtype": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "complex_dtype": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "static_deck_profile": {"$ref": "#/$defs/staticDeckProfile"},
+        "python_version": {"type": "string", "minLength": 1},
+        "cuda_version": {"type": "string", "minLength": 1},
+        "gpu": {"type": "string", "minLength": 1},
+        "driver_version": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {"required": ["static_deck_profile"]},
+          "then": {"properties": {"gprmax_version": {"const": "3.1.6"}}}
+        }
+      ]
+    },
+    "staticDeckProfile": {
+      "type": "object",
+      "required": [
+        "profile_id",
+        "source_archive_sha256",
+        "source_tree_label",
+        "internal_version",
+        "codename"
+      ],
+      "properties": {
+        "profile_id": {"const": "gprmax-legacy-static-deck-v1"},
+        "source_archive_sha256": {
+          "const": "b98b4ee28f56a993506c51ac1acdb831657fcb1809e1efe6f6c6cd7eb627f75e"
+        },
+        "source_tree_label": {"const": "gprMax-v.3.1.7"},
+        "internal_version": {"const": "3.1.6"},
+        "codename": {"const": "Big Smoke"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

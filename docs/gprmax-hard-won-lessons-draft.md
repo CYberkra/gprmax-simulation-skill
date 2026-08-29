@@ -390,6 +390,7 @@ SKILL.md（入口/编排）
 | 本文档 | 固化目标 |
 |---|---|
 | §0、§12 | `SKILL.md` 主流程 |
+| §0（状态机/保真度） | `references/gates-and-claims.md`（新增：GateState/ClaimState/F0-F5 阶梯/晋级门/依赖失效）|
 | §2-4、§6、§8 | `references/*` 新增模块说明 |
 | §5 | `references/source-and-sfcw.md`（对齐刘2021）|
 | §9、§10、§13B | `references/numerical-model-validity.md` |

@@ -1,0 +1,6 @@
+model_id: symbolic_model_id
+purpose: symbolic_model_purpose
+allowed_claims:
+  - symbolic_allowed_claim
+forbidden_claims:
+  - symbolic_forbidden_claim

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Gate Status Report",
+  "type": "object",
+  "required": ["results"],
+  "properties": {
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["gate_id", "state", "code", "summary", "evidence", "invalidates"],
+        "properties": {
+          "gate_id": {"type": "string", "minLength": 1},
+          "state": {
+            "type": "string",
+            "enum": ["PASS", "PASS_WITH_LIMITATION", "BLOCK", "STALE", "NOT_APPLICABLE"]
+          },
+          "code": {"type": "string", "minLength": 1},
+          "summary": {"type": "string", "minLength": 1},
+          "evidence": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "invalidates": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

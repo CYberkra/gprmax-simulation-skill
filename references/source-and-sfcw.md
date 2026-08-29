@@ -76,6 +76,22 @@ Track simulation time zero, waveform origin, source peak/delay, electrical phase
 reference, and reported range-zero datum separately. Remove a known source delay
 once, not once in the transfer function and again in plotting.
 
+## Custom waveform files
+
+A user-defined excitation file is a common failure point and must pass a parse
+smoke before any run:
+
+- verify the required header line the parser expects (for example `time flatpulse`
+  or the corresponding declaration) — a missing header makes gprMax fail to
+  parse the case;
+- verify the sample duration covers the simulation time window
+  (`samples × dt ≥ time_window`); a too-short file silently truncates or
+  zero-pads the excitation and invalidates late-time results;
+- if the file is used through `#excitation_file`, pass an explicit `fill_value`
+  (for example `0`) so interpolation does not leak NaN outside the sample range;
+- never rename, rewrite, or mix waveform files within a study; the waveform is
+  a frozen artifact recorded in the manifest.
+
 ## Background handling
 
 For a controlled target-response diagnostic, first form identically calibrated
