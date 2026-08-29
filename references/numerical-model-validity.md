@@ -45,3 +45,27 @@ geometry alignment, source/receiver placement, intended output dataset, and one
 small smoke case if it is permitted. Keep expensive simulations out of automated
 unit tests. For a formal numerical claim, retain the test definition, comparison
 observable, and evidence rather than only a final plot.
+
+## Generic numerical gates
+
+Use general-purpose defaults, never project-specific values:
+
+- mesh the highest tone: cells per wavelength ≥ 10 at the top of the band using
+  the shortest material wavelength (for dispersive media take the phase
+  velocity near band centre); anisotropic grids (dx≠dy≠dz) are allowed but the
+  observable-controlling direction must be stated;
+- time step from the CFL condition; for Debye-type media check τ/dt > 4;
+- PML layers from 10 upward; domain and PML clearance must keep boundary
+  interactions out of the analysed time window;
+- precision: fp32 floor is about -90 dB relative to the direct wave; a demand
+  beyond roughly 110 dB dynamic range requires fp64. Verify dtype from the
+  output dataset, never from a filename or command flag.
+
+## Environment probe
+
+Probe the local environment (GPU model, VRAM, CUDA, system memory, free disk on
+the output volume, Python version, gprMax presence/version) so the model plan
+can be matched to real resources. The probe is informational only: it never
+decides whether to run locally or on a server — that decision belongs to the
+user. Do not collect CPU model, usernames, directory listings, file contents,
+process lists, or network connections.

@@ -48,3 +48,30 @@ manifest, execution record, logs, raw outputs, audit result, analysis code,
 figures/tables, and a short result record. State exact SFCW frequency samples,
 window, source conditioning, background treatment, inverse method, envelope
 method, and coordinate datum in any derived figure or table.
+
+## Batch runs
+
+For a parameter scan:
+
+1. Define dimensions in the contract (`scan:` section) or a CSV matrix
+   (cartesian product or explicit case list).
+2. Expand into cases with independent case IDs and a parameter snapshot.
+3. Validate every case before any run: grid alignment, target overlap/gaps,
+   PML clearance, resolvable materials, numerical gates (cells/λ, CFL, time
+   window). Failed cases are reported and excluded from the run queue.
+4. Execute with per-case logs and a status machine
+   (pending/running/done/fail); support resume by skipping existing outputs;
+   prefer a live progress view.
+5. Summarise case → status → output path, and classify failures by root cause
+   (geometry / material / numerical / timeout).
+
+## Processing results for inspection
+
+gprMax raw outputs usually need processing to be visibly informative as
+A-scan / B-scan. Recommend a processing chain matched to the question — raw
+display, standard chain (direct-wave removal, diagnostic background
+subtraction, SFCW fusion), advanced chain (deconvolution, windowing,
+zero-padded inverse transform, Hilbert envelope), optional imaging, and
+display-only enhancement. Follow the user's explicit processing choice when
+given. Keep display-only enhancement separate from quantitative metrics, and
+record the chain parameters for reproducibility.

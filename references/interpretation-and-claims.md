@@ -69,3 +69,20 @@ For every conclusion, state the model class, materials, geometry, band,
 processing chain, noise/background treatment, and criterion. Use bounded wording
 such as “for the audited simulated case” when validation has not covered the
 variation needed for a general statement.
+
+## Processing-chain discipline
+
+Freeze the processing chain before comparative evaluation; do not change it
+mid-study. Normalisation, AGC, clipping and other display-only enhancements are
+for inspection only and never feed a quantitative metric. Distinguish three
+product layers: raw solver output, physically calibrated/conditioned data, and
+display-only figures. A processed figure must record its exact chain and
+parameters so it is reproducible and auditable.
+
+## User priority
+
+When the user explicitly specifies a processing method or parameter choice,
+follow the user's request. Recommended defaults serve as a starting point and
+never override an explicit user instruction. If a user request conflicts with a
+blocking validity gate, surface the conflict and ask rather than silently
+choosing either side.

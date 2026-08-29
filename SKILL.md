@@ -28,6 +28,42 @@ For new or changed geometry and solver settings, read
 [simulation-contract.md](references/simulation-contract.md) and
 [numerical-model-validity.md](references/numerical-model-validity.md).
 
+## Drive the model from a guided setup
+
+When the user wants to build a new model type, run the guided setup before
+writing any input: interview the user to establish the scenario, target and
+surrounding medium, frequency band and whether an SFCW-equivalent conclusion is
+needed, fidelity intent, and the run environment. Resolve unknown material
+parameters by researching literature and authoritative sources; present options
+with recommended, compromise, and not-recommended choices plus provenance, and
+record material entries in the local material library only after user
+confirmation. For each configuration axis (antenna, SFCW, dispersion, noise and
+clutter targets, target geometry, mesh, precision) recommend a value with a
+fold-open rationale, then generate a geometry sketch and the
+`simulation_contract.yaml` skeleton for confirmation.
+
+Probe the local environment (GPU, memory, disk, Python version, gprMax
+presence) to know what is available, but never decide the run environment on
+the user's behalf; the user chooses local or server.
+
+## Run controlled batches
+
+For a parameter scan, define dimensions in the contract or a CSV matrix, expand
+into cases, and validate every case (grid alignment, overlap, PML clearance,
+resolvable materials, numerical gates) before any run. Failed cases do not
+enter the run queue. Prefer the study's runner for execution; record per-case
+logs, support resume on existing outputs, and produce a status table with a
+live progress view.
+
+## Process results for inspection
+
+gprMax raw outputs usually need processing to be visibly informative as A-scan /
+B-scan. Recommend a processing chain matched to the question (raw display,
+standard chain, advanced deconvolution/windowing/envelope, optional imaging,
+display-only enhancement) and keep display enhancement separate from
+quantitative metrics. When the user specifies a processing choice, follow the
+user's request. Record the chain parameters for reproducibility.
+
 ## Keep comparisons controlled
 
 For a controlled comparison, state the independent variable and every retained
@@ -93,6 +129,16 @@ supports it; use declared energy/envelope metrics for amplitude separability.
 Read [interpretation-and-claims.md](references/interpretation-and-claims.md)
 before making detection, resolution, thickness, inversion, or system-performance
 claims.
+
+## Follow the study directory convention
+
+Maintain a standard directory layout: `README.md`, `simulation_contract.yaml`,
+`manifest.json`, `materials/`, `waveforms/`, `cases/`, `scripts/`, `tests/`,
+`logs/`, `outputs/` (read-only raw evidence), `analysis/`, `results/`, and
+`evidence/`. Name study directories with a date and key parameters
+(`01_20260830_SFCW_SLIDE_WET`). Never silently change physical parameters;
+record every intentional change in the study README. Create a new dated
+directory for a materially changed model; do not modify frozen packages.
 
 ## Close the evidence package
 
