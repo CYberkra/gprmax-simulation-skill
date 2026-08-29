@@ -1,0 +1,3 @@
+interface:
+  display_name: "gprMax Simulation"
+  short_description: "Plan, build, run, and audit reproducible gprMax FDTD simulations, including SFCW and broadband-to-SFCW-equivalent GPR studies"
