@@ -61,6 +61,21 @@ Use general-purpose defaults, never project-specific values:
   beyond roughly 110 dB dynamic range requires fp64. Verify dtype from the
   output dataset, never from a filename or command flag.
 
+## Quantitative checks at setup time
+
+At model setup (guided setup / scaffold stage) compute the numbers, do not
+merely state principles:
+
+- minimum cells per wavelength across the claimed band, using the realised
+  cell size and the shortest material wavelength at the highest tone;
+- the CFL-limited time step from the realised mesh;
+- PML thickness in metres and cells, and the clearance from the target and
+  from source/receiver to the PML boundary;
+- time-window coverage of the farthest target's two-way travel.
+
+Record these values in the contract so later gates can re-check them
+deterministically instead of re-deriving assumptions.
+
 ## Environment probe
 
 Probe the local environment (GPU model, VRAM, CUDA, system memory, free disk on

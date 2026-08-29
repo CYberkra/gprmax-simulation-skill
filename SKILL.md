@@ -19,7 +19,10 @@ before changing a model. They can define project-specific requirements; do not
 turn those local values into universal defaults.
 
 Identify the reference case, the scientific question, the permitted claim, and
-the one intended variable. Record the domain, mesh, material and dispersion
+the study design: a single-variable study with one factor, or a multi-factor
+design with a factor list. Record the factors and their levels and every
+invariant held constant, plus the design type (`single_variable` |
+`multi_factor`). Record the domain, mesh, material and dispersion
 models, target geometry, source/receiver configuration, boundaries, time
 window, requested numerical precision, excitation, receiver dataset, and—when
 applicable—the intended SFCW tone grid and processing convention.
@@ -66,11 +69,13 @@ user's request. Record the chain parameters for reproducibility.
 
 ## Keep comparisons controlled
 
-For a controlled comparison, state the independent variable and every retained
+For a controlled comparison, state the factor(s) and every retained
 control. A target-present/background pair must match in domain, mesh, retained
 materials, source/receiver configuration, waveform, time window, boundary
-treatment, and precision. Compare only outputs with matching sampling grids and
-identically defined receiver observables.
+treatment, and precision. Compare only outputs with identically defined
+receiver observables. Complex subtraction (for example background subtraction)
+requires matching sampling grids; any comparison that resamples must declare
+and validate the resampling before use.
 
 Reuse an intact, audited compatible run instead of spending compute to rerun it.
 If an output is missing, corrupt, stale, or cannot be reconciled with its input,
