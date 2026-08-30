@@ -57,8 +57,6 @@ def identify_research_needs(
     ``templates/scenarios/`` relative to the current directory when absent.
     """
     medium = _mapping(contract.get("medium"), "contract.medium")
-    task = _mapping(contract.get("task"), "contract.task")
-    waveform = _mapping(contract.get("waveform"), "contract.waveform")
 
     materials_root = Path(materials_dir) if materials_dir else Path("materials")
     scenarios_root = Path(scenarios_dir) if scenarios_dir else Path("templates") / "scenarios"
@@ -87,10 +85,7 @@ def identify_research_needs(
                 )
             )
 
-    signature = {
-        "scenario_type": task.get("objective", "other"),
-        "needs_sfcw": waveform.get("measurement_mode") == "sfcw_equivalent",
-    }
+    signature = templates_lib.signature_from_contract(contract)
     matched = (
         templates_lib.match_scenario(signature, scenarios_root)
         if scenarios_root.is_dir()

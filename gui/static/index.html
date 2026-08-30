@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gprMax 仿真向导</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --border: #e2e5ea;
+    --text: #1c2430; --muted: #68778d;
+    --accent: #2563eb; --accent-soft: #eff4ff;
+    --good: #16a34a; --warn: #d97706; --bad: #dc2626;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5;
+  }
+  .topbar {
+    background: #1e293b; color: #fff; padding: 12px 24px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .topbar h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .topbar .status { font-size: 12px; color: #94a3b8; }
+  .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px 24px; max-width: 1400px; margin: 0 auto; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+  .panel h2 { font-size: 14px; margin: 0 0 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+  .panel.wide { grid-column: 1 / -1; }
+  .step { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+  .step h3 { margin: 0 0 8px; font-size: 13px; }
+  .field { margin-bottom: 8px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .field input, .field select {
+    width: 100%; padding: 7px 10px; border: 1px solid var(--border);
+    border-radius: 6px; font-size: 13px; background: #fff; color: var(--text);
+  }
+  .field input:focus, .field select:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  button {
+    padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border);
+    background: #fff; cursor: pointer; font-size: 13px; font-weight: 500;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:hover { filter: brightness(0.97); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .rec { border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 8px; }
+  .rec .axis { font-weight: 600; font-size: 13px; }
+  .rec .opt { margin-top: 4px; font-size: 13px; }
+  .rec .rationale { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; margin-left: 6px; }
+  .tag.rec { background: var(--good); color: #fff; }
+  .tag.def { background: var(--accent); color: #fff; }
+  .muted { color: var(--muted); font-size: 12px; }
+  pre { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 8px; font-size: 12px; overflow: auto; max-height: 300px; }
+  .need { border-left: 3px solid var(--accent); padding: 6px 10px; margin-bottom: 6px; background: var(--accent-soft); border-radius: 0 6px 6px 0; font-size: 13px; }
+  .need .reason { color: var(--muted); font-size: 12px; }
+  .matched { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px; }
+  .unmatched { background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 10px; font-size: 13px; }
+  .probe-item { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f1f5f9; font-size: 13px; }
+  .probe-item .k { color: var(--muted); }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>gprMax 仿真向导</h1>
+  <span class="status" id="sessionLabel">未创建会话</span>
+</div>
+
+<div class="layout">
+  <!-- 左列：引导表单 -->
+  <div class="panel">
+    <h2>① 引导式建模</h2>
+    <div id="formContainer">加载中…</div>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="btnInit">新建会话</button>
+      <button id="btnDump">生成契约草稿</button>
+    </div>
+    <div id="dumpOutput" style="margin-top:10px"></div>
+  </div>
+
+  <!-- 右列：配置轴推荐 -->
+  <div class="panel">
+    <h2>② 配置轴推荐</h2>
+    <div class="muted" style="margin-bottom:8px">基于场景与拟真度自动推荐；用户可点选覆盖。</div>
+    <div class="field">
+      <label>场景类型</label>
+      <select id="recScenario">
+        <option value="tunnel">隧道/巷道</option>
+        <option value="landslide">滑坡</option>
+        <option value="archaeology">考古</option>
+        <option value="geotechnical">岩土</option>
+        <option value="inspection">工程检测</option>
+        <option value="other">其他</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>拟真度</label>
+      <select id="recFidelity">
+        <option value="quick">快速验证</option>
+        <option value="standard" selected>标准研究</option>
+        <option value="publication">发表级</option>
+      </select>
+    </div>
+    <div class="field">
+      <label><input type="checkbox" id="recSfcw" checked> 需要 SFCW 体制结论</label>
+    </div>
+    <button class="primary" id="btnRecommend" style="width:100%">生成推荐</button>
+    <div id="recOutput" style="margin-top:10px"></div>
+  </div>
+
+  <!-- 第三面板：环境探测 -->
+  <div class="panel">
+    <h2>③ 环境探测</h2>
+    <div class="muted" style="margin-bottom:8px">探测本机 GPU / 内存 / 磁盘 / Python / gprMax。只提供信息，运行环境由你决定。</div>
+    <button class="primary" id="btnProbe">探测本机</button>
+    <div id="probeOutput" style="margin-top:10px"></div>
+  </div>
+
+  <!-- 第四面板：模板匹配与调研需求 -->
+  <div class="panel">
+    <h2>④ 模板匹配 + 调研需求</h2>
+    <div class="muted" style="margin-bottom:8px">先 `生成契约草稿`，再检查是否匹配已验证场景模板；不匹配则列出待调研项。</div>
+    <button class="primary" id="btnCheck">检查模板与调研需求</button>
+    <div id="checkOutput" style="margin-top:10px"></div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
