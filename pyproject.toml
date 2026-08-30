@@ -2,7 +2,7 @@
 name = "gprmax-simulation-skill"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["PyYAML>=6", "jsonschema>=4.20", "numpy>=1.26", "h5py>=3.10"]
+dependencies = ["PyYAML>=6", "jsonschema>=4.20", "numpy>=1.26", "h5py>=3.10", "matplotlib>=3.8"]
 
 [project.optional-dependencies]
 gui = ["fastapi>=0.110", "uvicorn>=0.29"]

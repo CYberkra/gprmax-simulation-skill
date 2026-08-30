@@ -24,6 +24,7 @@ import scripts.wizard as wizard
 from scripts.scaffold import describe_layout, create_study_skeleton
 import scripts.research as research
 import scripts.templates_lib as templates_lib
+import scripts.visualize as visualize
 
 
 def build_core_registry() -> GateRegistry:
@@ -387,6 +388,20 @@ def _parser() -> argparse.ArgumentParser:
     rcmd.add_argument("contract", type=Path)
     rcmd.add_argument("--materials-dir", type=Path, default=Path("materials"))
     rcmd.add_argument("--scenarios-dir", type=Path, default=DEFAULT_SCENARIOS)
+
+    scmd = commands.add_parser("sfcw")
+    ssub = scmd.add_subparsers(dest="sfcw_command", required=True)
+    sprocess = ssub.add_parser("process")
+    sprocess.add_argument("out_file", type=Path)
+    sprocess.add_argument("--mode", choices=("impulse_lti", "broadband_deconvolution"), default="impulse_lti")
+    sprocess.add_argument("--band", required=True, help="tone band as <lo>-<hi> in MHz, e.g. 30-240")
+    sprocess.add_argument("--df-mhz", type=float, default=1.0)
+    sprocess.add_argument("--dt-s", type=float, default=None)
+    sprocess.add_argument("--impulse-response", type=Path, default=None, help="h[n] time series (.npy or text) for impulse_lti")
+    sprocess.add_argument("--source-waveform", type=Path, default=None, help="source time series for broadband_deconvolution")
+    sprocess.add_argument("--output-dir", type=Path, default=Path("results"))
+    sprocess.add_argument("--zero-pad", type=int, default=8)
+    sprocess.add_argument("--regularisation", type=float, default=1e-10)
     return parser
 
 
@@ -512,6 +527,59 @@ def _research_needs(contract_path: Path, materials_dir: Path, scenarios_dir: Pat
     return 0
 
 
+def _load_array(path: Path) -> np.ndarray:
+    """Load a 1-D float array from .npy or whitespace text."""
+    if path.suffix.lower() == ".npy":
+        arr = np.load(path)
+    else:
+        arr = np.loadtxt(path)
+    arr = np.asarray(arr, dtype=float)
+    if arr.ndim != 1:
+        raise ValueError(f"{path}: expected a one-dimensional array, got {arr.ndim}D")
+    return arr
+
+
+def _sfcw_process(args: argparse.Namespace) -> int:
+    try:
+        lo_str, hi_str = str(args.band).split("-")
+        f_lo, f_hi = float(lo_str), float(hi_str)
+        if not (0 < f_lo < f_hi):
+            raise ValueError("band must satisfy 0 < lo < hi")
+        n_tones = int(round((f_hi - f_lo) / args.df_mhz)) + 1
+        frequencies_mhz = [f_lo + i * args.df_mhz for i in range(n_tones)]
+        band = (f_lo, f_hi)
+
+        impulse_response = (
+            _load_array(args.impulse_response)
+            if args.impulse_response is not None
+            else None
+        )
+        source_waveform = (
+            _load_array(args.source_waveform)
+            if args.source_waveform is not None
+            else None
+        )
+
+        artifacts = visualize.process_and_plot(
+            args.out_file,
+            mode=args.mode,
+            frequencies_mhz=frequencies_mhz,
+            dt_s=args.dt_s,
+            output_dir=args.output_dir,
+            impulse_response=impulse_response,
+            source_waveform=source_waveform,
+            band_mhz=band,
+            zero_pad_factor=args.zero_pad,
+            regularisation=args.regularisation,
+        )
+    except (visualize.ProcessingError, ValueError, OSError) as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
+    print(f"ascan        -> {artifacts['ascan_png']}")
+    print(f"parameters   -> {artifacts['parameters_json']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "init":
@@ -584,6 +652,10 @@ def main(argv: list[str] | None = None) -> int:
         raise AssertionError(f"unhandled template command: {args.template_command}")
     if args.command == "research":
         return _research_needs(args.contract, args.materials_dir, args.scenarios_dir)
+    if args.command == "sfcw":
+        if args.sfcw_command == "process":
+            return _sfcw_process(args)
+        raise AssertionError(f"unhandled sfcw command: {args.sfcw_command}")
     raise AssertionError(f"unhandled command: {args.command}")
 
 
