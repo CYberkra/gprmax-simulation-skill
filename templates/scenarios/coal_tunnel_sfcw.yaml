@@ -32,15 +32,17 @@ frozen_parameters:
     pml_layers: 20
   waveform:
     sfcw_mode: impulse_lti
-    band_mhz: [30, 240]
+    band_mhz: [30, 213]
     df_mhz: 1.0
+    note: 频带上限锚定 GAP1M 基准 3dB 分辨率首过值 30-213 MHz（含判稳余量）；df 为 SFCW 音调间隔
   link_budget:
     tx_power_dbm_per_tone: 37
     rx_gain: 1.5
     noise_figure_db: 6
-    df_mhz: 0.5
+    receiver_bandwidth_mhz: 0.5
     noise_floor_dbm_per_tone: -111
+    note: receiver_bandwidth 为接收机每音调等效带宽（噪声底计算），区别于 waveform.df_mhz（音调间隔）
   processing:
-    core_chain: debye_bp_blackman
+    core_chain: frozen_a_chain
     note: 冻结 A 链：exact 复频率采样 → Wiener 去卷积 → 选频带 → Blackman → zero-padded IFFT
 applicability: 80 m 深部煤巷 SFCW 频段判决类研究，NEWCOAL 煤体

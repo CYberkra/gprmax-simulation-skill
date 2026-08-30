@@ -241,6 +241,7 @@ def save_processing_parameters(result: Mapping[str, Any], out_path: Path) -> Pat
     payload["mode"] = result.get("mode")
     payload["delay_bin_s"] = result.get("delay_bin_s")
     payload["unambiguous_delay_s"] = result.get("unambiguous_delay_s")
+    payload["fdtd_dt_s"] = result.get("fdtd_dt_s")
     out_path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",

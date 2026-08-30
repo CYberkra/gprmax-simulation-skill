@@ -164,9 +164,13 @@ def quad_mix_extract(
 
     requested = int(np.ceil(integration_cycles / (f_hz * dt_s)))
     available = y.size - settling_samples
-    count = min(requested, available)
-    if count < 3:
-        raise ValueError("not enough steady-state samples for quadrature fitting")
+    if available < requested:
+        raise ValueError(
+            "not enough steady-state samples for quadrature fitting: "
+            f"need {requested} (integration_cycles/f) after settling, "
+            f"have {available}; time window too short for a reliable complex sample"
+        )
+    count = requested
     start = y.size - count
     if start < settling_samples:
         start = settling_samples

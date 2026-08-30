@@ -7,6 +7,7 @@ duplicated here.
 from __future__ import annotations
 
 import json
+import time
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -50,10 +51,10 @@ async def wizard_fields():
 
 @app.post("/api/wizard/init")
 async def wizard_init():
-    """Create a new wizard session."""
+    """Create a new wizard session with a collision-free name."""
     DEFAULT_SESSION_DIR.mkdir(parents=True, exist_ok=True)
-    name = str(len(list(DEFAULT_SESSION_DIR.iterdir())))
-    session = wizard_mod.create_session(DEFAULT_SESSION_DIR / name, force=True)
+    name = f"session_{int(time.time() * 1000)}"
+    session = wizard_mod.create_session(DEFAULT_SESSION_DIR / name)
     return {"session_dir": str(session.path), "status": wizard_mod.status(session)}
 
 
@@ -107,7 +108,7 @@ async def axes_recommend(body: dict[str, Any]):
             explicit=body.get("explicit"),
             needs_sfcw=body.get("needs_sfcw"),
         )
-    except ValueError as error:
+    except (ValueError, KeyError) as error:
         raise HTTPException(status_code=422, detail=str(error))
     return rec
 

@@ -139,6 +139,41 @@ def audit_sfcw(ctx: GateContext) -> GateResult:
                 "requested_max_delay_s must be smaller than the unambiguous delay 1/df",
             )
 
+        # Nyquist check: the highest tone must be below the Nyquist rate
+        # (only when a solver time step is declared).
+        numerics = contract.get("numerics")
+        dt_s = None
+        if isinstance(numerics, Mapping):
+            dt_s = numerics.get("dt_s")
+        if dt_s is not None and tones[-1] >= 0.5 / _positive(dt_s, "numerics.dt_s"):
+            return _blocked(
+                "BLOCK_SFCW_TONES_ABOVE_NYQUIST",
+                f"highest tone {tones[-1]/1e6:.1f} MHz >= Nyquist {0.5/dt_s/1e6:.1f} MHz "
+                f"(dt_s={dt_s:.2e})",
+            )
+
+        # Steady-state feasibility: the trace window must be long enough for
+        # the ramp, settling, and the requested integration cycles (only when
+        # ramp_k and a time window are declared).
+        ramp_k = processing.get("ramp_k")
+        window_s = numerics.get("time_window_s") if isinstance(numerics, Mapping) else None
+        if ramp_k is not None and window_s is not None:
+            ramp_k = _fraction(ramp_k, "processing.ramp_k")
+            f_lo = tones[0]
+            ramp_s = 1.0 / (ramp_k * f_lo) if ramp_k > 0 else 0.0
+            int_cycles = processing.get("integration_cycles", 4.0)
+            settling_s = processing.get("settling_samples", 0) * dt_s if dt_s else 0.0
+            int_s = int_cycles / f_lo if f_lo > 0 else 0.0
+            needed_s = ramp_s + settling_s + int_s
+            if window_s < needed_s:
+                return _blocked(
+                    "BLOCK_SFCW_STEADY_STATE_WINDOW",
+                    f"time window {window_s:.2e} s too short for steady-state "
+                    f"extraction: need {needed_s:.2e} s "
+                    f"(ramp {ramp_s:.2e} + settling {settling_s:.2e} + "
+                    f"integration {int_s:.2e})",
+                )
+
         report = {
             "processing_id": processing_id,
             "mode": mode,

@@ -177,6 +177,13 @@ def propose_template(
     scenarios_dir = Path(scenarios_dir)
     scenarios_dir.mkdir(parents=True, exist_ok=True)
     target = scenarios_dir / f"{validated['name']}.yaml"
+    if target.exists():
+        existing = load_template(target)
+        if existing.get("status") == "verified":
+            raise TemplateError(
+                f"template {validated['name']!r} already exists and is verified; "
+                "refusing to overwrite a verified template — pick a new name"
+            )
     target.write_text(
         yaml.safe_dump(validated, sort_keys=False, allow_unicode=True),
         encoding="utf-8",

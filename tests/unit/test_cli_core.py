@@ -9,7 +9,8 @@ from scripts.gates import GateRegistry
 from scripts.cli import main
 
 
-def test_minimal_fixture_preflight_succeeds(tmp_path: Path):
+def test_minimal_fixture_preflight_blocks_incomplete(tmp_path: Path):
+    """A minimal contract without runtime/geometry/etc. BLOCKs (fail-closed)."""
     project_root = tmp_path / "minimal"
     report_path = project_root / "gates" / "preflight.json"
     assert not report_path.exists()
@@ -23,8 +24,12 @@ def test_minimal_fixture_preflight_succeeds(tmp_path: Path):
         ]
     )
 
-    assert rc == 0
+    assert rc == 2
     assert report_path.exists()
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    results = report.get("results", [])
+    assert len(results) > 0
+    assert results[0]["state"] == "BLOCK"
 
 
 def test_init_copies_generic_contract_template(tmp_path: Path):

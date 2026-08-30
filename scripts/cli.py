@@ -18,6 +18,11 @@ from scripts.contracts import ContractError, load_contract
 from scripts.core import GateContext, GateResult, GateState, write_json
 from scripts.fidelity import FidelityLevel, PromotionDecision, can_promote
 from scripts.gates import GateContractError, GateRegistry, run_stage, write_gate_report
+import scripts.audit_environment as audit_env
+import scripts.audit_geometry as audit_geo
+import scripts.audit_materials as audit_mat
+import scripts.audit_numerics as audit_num
+import scripts.audit_precision as audit_prec
 import scripts.materials as materials
 import scripts.probe_environment as probe
 import scripts.wizard as wizard
@@ -28,8 +33,47 @@ import scripts.visualize as visualize
 
 
 def build_core_registry() -> GateRegistry:
-    """Return the registry extended by later audit modules."""
-    return GateRegistry()
+    """Register the model-validation gates into the preflight stage.
+
+    Order follows the evidence-dependency chain:
+    environment → numerics (grid/cfl/time_window/pml) → geometry/materials →
+    precision → sfcw policy. A BLOCK anywhere stops the preflight.
+    """
+    registry = GateRegistry()
+    registry.register("preflight", "environment", audit_env.audit_environment)
+    registry.register(
+        "preflight", "grid", audit_num.audit_grid, depends_on=("environment",)
+    )
+    registry.register(
+        "preflight", "cfl", audit_num.audit_cfl, depends_on=("grid",)
+    )
+    registry.register(
+        "preflight", "time_window", audit_num.audit_time_window, depends_on=("cfl",)
+    )
+    registry.register(
+        "preflight", "pml", audit_num.audit_pml, depends_on=("time_window",)
+    )
+    registry.register(
+        "preflight", "geometry", audit_geo.audit_geometry, depends_on=("pml",)
+    )
+    registry.register(
+        "preflight", "model_purpose", audit_geo.audit_model_purpose,
+        depends_on=("geometry",),
+    )
+    registry.register(
+        "preflight", "materials", audit_mat.audit_materials, depends_on=("geometry",)
+    )
+    registry.register(
+        "preflight", "precision", audit_prec.audit_precision,
+        depends_on=("materials",),
+    )
+    registry.register(
+        "preflight", "sfcw_policy", audit_sfcw, depends_on=("precision",)
+    )
+    registry.register(
+        "preflight", "source", audit_source, depends_on=("sfcw_policy",)
+    )
+    return registry
 
 
 def _template_path() -> Path:
@@ -450,7 +494,7 @@ def _resolve_materials_dir(args: argparse.Namespace) -> Path:
     explicit = getattr(args, "materials_dir", None)
     if explicit is not None:
         return explicit
-    return args.materials_dir if hasattr(args, "materials_dir") else Path("materials")
+    return Path("materials")
 
 
 def _template_list(scenarios_dir: Path) -> int:
@@ -545,6 +589,8 @@ def _sfcw_process(args: argparse.Namespace) -> int:
         f_lo, f_hi = float(lo_str), float(hi_str)
         if not (0 < f_lo < f_hi):
             raise ValueError("band must satisfy 0 < lo < hi")
+        if args.df_mhz <= 0:
+            raise ValueError("--df-mhz must be positive")
         n_tones = int(round((f_hi - f_lo) / args.df_mhz)) + 1
         frequencies_mhz = [f_lo + i * args.df_mhz for i in range(n_tones)]
         band = (f_lo, f_hi)

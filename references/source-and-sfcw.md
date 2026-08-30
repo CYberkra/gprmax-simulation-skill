@@ -78,7 +78,9 @@ Signal model and chain:
 - synthesis: `y[n] = x[n] * h[n]` for each single-frequency `x[n]`;
 - extraction: quadrature mixing `I_n = Rx·sin(2πf_n t)`, `Q_n = Rx·cos(2πf_n t)`,
   then low-pass to remove the `2f_n` term, giving the complex sample
-  `Rx(n) = I_n + jQ_n = (A_n/2)e^{jφ_n}`;
+  `Rx(n) = I_n + jQ_n = (A_n/2)e^{-jφ_n}` (negative-phase convention so a
+  target at delay `τ` reconstructs at positive delay after the inverse
+  transform);
 - fusion: inverse transform of the N complex samples to a time-domain A-scan,
   then assemble traces into a B-scan.
 
@@ -87,8 +89,9 @@ Constraints to enforce:
 - mesh by the highest tone: `dx ≤ c/(10·f_max·√ε_max)`; CFL
   `dt ≤ 1/[c·√(1/dx² + 1/dy² + 1/dz²)]`;
 - time window must cover the two-way travel to the farthest target;
-- ramp the transmitted tone onset (linear ramp `Tx(t)= (f_n t)·sin(2πf_n t)` for
-  `f_n t < k`, then `sin(2πf_n t)`) to avoid Gibbs-type high-frequency artefacts;
+- ramp the transmitted tone onset (linear ramp `Tx(t)= k·(f_n t)·sin(2πf_n t)` for
+  `k·f_n t < 1`, then `sin(2πf_n t)`, endpoint continuous at factor 1) to avoid
+  Gibbs-type high-frequency artefacts;
 - quadrature mixing must be followed by low-pass filtering, otherwise the `2f_n`
   component corrupts the baseband I/Q.
 
