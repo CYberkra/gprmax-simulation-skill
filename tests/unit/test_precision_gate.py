@@ -613,19 +613,17 @@ def test_passing_fp32_comparison_fixture_allows_risk_flag_exception(tmp_path: Pa
     [
         "missing_profile",
         "gprmax_4_runtime",
-        "wrong_profile_id",
-        "wrong_source_archive",
-        "wrong_source_tree",
         "wrong_internal_version",
-        "wrong_codename",
         "extra_profile_field",
         "boolean_profile_field",
     ],
 )
-def test_fp32_exception_requires_exact_reviewed_static_deck_profile(
+def test_fp32_exception_requires_reviewed_static_deck_profile(
     tmp_path: Path, mutation: str
 ):
-    """Catches a closed parser authorizing source/runtime syntax it never reviewed."""
+    """Structural or consistency violations in the static deck profile
+    block fp32 exception. Generic profile values (id, archive, tree,
+    codename) are NOT locked — the skill accepts any well-formed build."""
     candidate = np.array([1.0], dtype=np.float32)
     reference = np.array([1.0], dtype=np.float64)
     _write_dataset(tmp_path / "adequacy.h5", "/candidate", candidate)
@@ -640,16 +638,8 @@ def test_fp32_exception_requires_exact_reviewed_static_deck_profile(
         elif mutation == "gprmax_4_runtime":
             environment["gprmax_version"] = "4.0.0"
             environment["banner"] = "gprMax 4.0.0"
-        elif mutation == "wrong_profile_id":
-            profile["profile_id"] = "gprmax-legacy-static-deck-v2"
-        elif mutation == "wrong_source_archive":
-            profile["source_archive_sha256"] = "0" * 64
-        elif mutation == "wrong_source_tree":
-            profile["source_tree_label"] = "gprMax-v.4.0.0"
         elif mutation == "wrong_internal_version":
             profile["internal_version"] = "3.1.7"
-        elif mutation == "wrong_codename":
-            profile["codename"] = "Unknown"
         elif mutation == "extra_profile_field":
             profile["unreviewed_source"] = "accepted"
         elif mutation == "boolean_profile_field":
@@ -677,6 +667,51 @@ def test_fp32_exception_requires_exact_reviewed_static_deck_profile(
 
     assert result.state is GateState.BLOCK
     assert result.code == "BLOCK_FP32_ADEQUACY_EVIDENCE"
+
+
+def test_fp32_exception_accepts_custom_static_deck_profile_values(tmp_path: Path):
+    """A static deck profile with different (non-legacy) values is accepted
+    for fp32 exception, as long as it is structurally valid and version-
+    consistent."""
+    candidate = np.array([1.0], dtype=np.float32)
+    reference = np.array([1.0], dtype=np.float64)
+    _write_dataset(tmp_path / "adequacy.h5", "/candidate", candidate)
+    with h5py.File(tmp_path / "adequacy.h5", "a") as handle:
+        handle.create_dataset("reference", data=reference)
+    evidence = _adequacy_evidence(tmp_path, candidate, reference)
+
+    custom_profile = {
+        "profile_id": "gprmax-project-deck-v1",
+        "source_archive_sha256": "0" * 64,
+        "source_tree_label": "gprMax-v.3.2.0",
+        "internal_version": "3.2.0",
+        "codename": "Custom Build",
+    }
+    for run_id in ("run-fp32", "run-fp64"):
+        path = tmp_path / "manifests" / f"{run_id}.json"
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest["environment"]["gprmax_version"] = "3.2.0"
+        manifest["environment"]["banner"] = "gprMax 3.2.0"
+        manifest["environment"]["static_deck_profile"] = custom_profile
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+    actual_environment = _runtime()
+    actual_environment["gprmax_version"] = "3.2.0"
+    actual_environment["banner"] = "gprMax 3.2.0"
+    actual_environment["static_deck_profile"] = dict(custom_profile)
+    ctx = _context(
+        tmp_path,
+        values=candidate,
+        artifacts={"environment": actual_environment},
+        numerics={
+            "precision_requirement": "float32",
+            "risk_flags": ["long_distance"],
+            "fp32_adequacy_evidence": evidence,
+        },
+    )
+
+    result = audit_precision(ctx)
+
+    assert result.state is GateState.PASS
 
 
 @pytest.mark.parametrize(

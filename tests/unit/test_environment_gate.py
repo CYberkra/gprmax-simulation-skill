@@ -94,14 +94,15 @@ def test_reviewed_static_deck_profile_is_validated_and_preserved(tmp_path: Path)
         "missing_field",
         "extra_field",
         "boolean_field",
-        "wrong_source",
         "version_disagreement",
     ],
 )
-def test_declared_static_deck_profile_must_be_exact_when_present(
+def test_declared_static_deck_profile_structurally_validated(
     tmp_path: Path, mutation: str
 ):
-    """Catches malformed or unreviewed profile evidence being silently discarded."""
+    """Profile structure and version consistency are enforced; the specific
+    values (archive hash, codename, etc.) are not locked to a legacy build —
+    the generic skill accepts any well-formed profile."""
     manifest = {
         "gprmax_version": "3.1.6",
         "banner": "gprMax 3.1.6 (Big Smoke)",
@@ -120,8 +121,6 @@ def test_declared_static_deck_profile_must_be_exact_when_present(
         profile["unreviewed_source"] = "accepted"
     elif mutation == "boolean_field":
         profile["internal_version"] = True
-    elif mutation == "wrong_source":
-        profile["source_archive_sha256"] = "0" * 64
     elif mutation == "version_disagreement":
         manifest["gprmax_version"] = "3.1.7"
     log = tmp_path / "logs" / "runtime.json"
@@ -134,6 +133,34 @@ def test_declared_static_deck_profile_must_be_exact_when_present(
     assert result.state is GateState.BLOCK
     assert result.code == "BLOCK_ENVIRONMENT_UNRESOLVED"
     assert "environment" not in ctx.artifacts
+
+
+def test_static_deck_profile_accepts_custom_build_values(tmp_path: Path):
+    """A well-formed profile for a different (non-legacy) build is accepted."""
+    manifest = {
+        "gprmax_version": "3.2.0",
+        "banner": "gprMax 3.2.0",
+        "import_path": "/opt/gprMax/gprMax/__init__.py",
+        "backend": "cpu",
+        "real_dtype": "float32",
+        "complex_dtype": "complex64",
+        "static_deck_profile": {
+            "profile_id": "gprmax-project-deck-v1",
+            "source_archive_sha256": "0" * 64,
+            "source_tree_label": "gprMax-v.3.2.0",
+            "internal_version": "3.2.0",
+            "codename": "Custom Build",
+        },
+    }
+    log = tmp_path / "logs" / "runtime.json"
+    log.parent.mkdir()
+    log.write_text(json.dumps(manifest), encoding="utf-8")
+    ctx = GateContext(tmp_path, {"runtime": {"manifest": "logs/runtime.json"}})
+
+    result = audit_environment(ctx)
+
+    assert result.state is GateState.PASS
+    assert ctx.artifacts["environment"] == manifest
 
 
 @pytest.mark.parametrize("field", ["gprmax_version", "banner", "import_path", "backend", "real_dtype", "complex_dtype"])
@@ -250,14 +277,15 @@ def test_run_manifest_schema_rejects_whitespace_required_environment_identity(fi
         "missing_field",
         "extra_field",
         "boolean_field",
-        "wrong_constant",
-        "version_disagreement",
     ],
 )
 def test_run_manifest_schema_rejects_malformed_static_deck_profile(
     mutation: str,
 ):
-    """Catches formal manifests carrying ambiguous or unreviewed parser identity."""
+    """Schema rejects structurally malformed profiles. Specific profile values
+    (archive hash, version, codename) are NOT locked: a generic skill accepts
+    any well-formed build profile; version consistency is an audit-layer
+    concern, not a schema const."""
     schema = json.loads(
         Path("schemas/run_manifest.schema.json").read_text(encoding="utf-8")
     )
@@ -302,10 +330,6 @@ def test_run_manifest_schema_rejects_malformed_static_deck_profile(
         profile["unreviewed_source"] = "accepted"
     elif mutation == "boolean_field":
         profile["internal_version"] = True
-    elif mutation == "wrong_constant":
-        profile["source_archive_sha256"] = "0" * 64
-    elif mutation == "version_disagreement":
-        manifest["environment"]["gprmax_version"] = "3.1.7"
 
     errors = list(validator.iter_errors(manifest))
 

@@ -78,13 +78,7 @@
         "gpu": {"type": "string", "minLength": 1},
         "driver_version": {"type": "string", "minLength": 1}
       },
-      "additionalProperties": true,
-      "allOf": [
-        {
-          "if": {"required": ["static_deck_profile"]},
-          "then": {"properties": {"gprmax_version": {"const": "3.1.6"}}}
-        }
-      ]
+      "additionalProperties": true
     },
     "staticDeckProfile": {
       "type": "object",
@@ -96,13 +90,11 @@
         "codename"
       ],
       "properties": {
-        "profile_id": {"const": "gprmax-legacy-static-deck-v1"},
-        "source_archive_sha256": {
-          "const": "b98b4ee28f56a993506c51ac1acdb831657fcb1809e1efe6f6c6cd7eb627f75e"
-        },
-        "source_tree_label": {"const": "gprMax-v.3.1.7"},
-        "internal_version": {"const": "3.1.6"},
-        "codename": {"const": "Big Smoke"}
+        "profile_id": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "source_archive_sha256": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "source_tree_label": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "internal_version": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "codename": {"type": "string", "minLength": 1, "pattern": "\\S"}
       },
       "additionalProperties": false
     }
