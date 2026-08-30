@@ -421,14 +421,17 @@ def _contract_draft(
         "one_factor" if len(factors) == 1 else "factorial"
     )
     sfcw_enabled = chosen_sfcw(recommendations)
+    project = {
+        "design_type": design_type,
+        "design_subtype": design_subtype,
+        "factors": factors,
+        "invariants": [],
+        "note": "factors declared by the user; other parameters are fixed controls",
+    }
+    if "target_depth_m" in session.answers:
+        project["target_depth_m"] = float(session.answers["target_depth_m"])
     return {
-        "project": {
-            "design_type": design_type,
-            "design_subtype": design_subtype,
-            "factors": factors,
-            "invariants": [],
-            "note": "factors declared by the user; other parameters are fixed controls",
-        },
+        "project": project,
         "task": {
             "objective": session.answers.get("scenario_type", "other"),
             "claim_scope": "numerical",

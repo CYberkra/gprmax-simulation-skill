@@ -1,0 +1,46 @@
+name: coal_tunnel_sfcw
+scenario: 煤矿巷道 SFCW 超前探测
+status: verified
+verified_by:
+  - GAP1M 基准包 (20260820)
+  - 26-31 FP64 面积阈值系列 (20260823)
+match:
+  scenario_type: tunnel
+  needs_sfcw: true
+  depth_range_m: [50, 100]
+frozen_parameters:
+  medium:
+    model: debye
+    debye_eps_inf: 2.811
+    debye_delta_eps: 0.182
+    debye_tau_s: 3.397e-10
+    sigma_s_m: 1.45e-4
+    source: NEWCOAL (Zhang 2020)
+  target:
+    material: WET 含水破碎带
+    eps_r: 5.17
+    sigma_s_m: 0.05
+    note: 工程灵敏度点，非实测标定
+  antenna:
+    type: ideal_hertzian
+    polarization: z
+    tx_rx_baseline_m: 0.5
+  grid:
+    dx_m: 0.04
+    dy_m: 0.0625
+    dz_m: 0.0625
+    pml_layers: 20
+  waveform:
+    sfcw_mode: impulse_lti
+    band_mhz: [30, 240]
+    df_mhz: 1.0
+  link_budget:
+    tx_power_dbm_per_tone: 37
+    rx_gain: 1.5
+    noise_figure_db: 6
+    df_mhz: 0.5
+    noise_floor_dbm_per_tone: -111
+  processing:
+    core_chain: debye_bp_blackman
+    note: 冻结 A 链：exact 复频率采样 → Wiener 去卷积 → 选频带 → Blackman → zero-padded IFFT
+applicability: 80 m 深部煤巷 SFCW 频段判决类研究，NEWCOAL 煤体

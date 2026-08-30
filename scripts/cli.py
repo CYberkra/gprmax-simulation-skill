@@ -22,6 +22,8 @@ import scripts.materials as materials
 import scripts.probe_environment as probe
 import scripts.wizard as wizard
 from scripts.scaffold import describe_layout, create_study_skeleton
+import scripts.research as research
+import scripts.templates_lib as templates_lib
 
 
 def build_core_registry() -> GateRegistry:
@@ -363,7 +365,32 @@ def _parser() -> argparse.ArgumentParser:
     wdump = wsub.add_parser("dump")
     wdump.add_argument("session", type=Path)
     wdump.add_argument("--out", type=Path)
+
+    tcmd = commands.add_parser("template")
+    tsub = tcmd.add_subparsers(dest="template_command", required=True)
+    tsub.add_parser("list").add_argument("--scenarios-dir", type=Path, default=DEFAULT_SCENARIOS)
+    tshow = tsub.add_parser("show")
+    tshow.add_argument("name")
+    tshow.add_argument("--scenarios-dir", type=Path, default=DEFAULT_SCENARIOS)
+    tmatch = tsub.add_parser("match")
+    tmatch.add_argument("contract", type=Path)
+    tmatch.add_argument("--scenarios-dir", type=Path, default=DEFAULT_SCENARIOS)
+    tpropose = tsub.add_parser("propose")
+    tpropose.add_argument("entry", type=Path)
+    tpropose.add_argument("--scenarios-dir", type=Path, default=DEFAULT_SCENARIOS)
+    tverify = tsub.add_parser("verify")
+    tverify.add_argument("name")
+    tverify.add_argument("--verified-by", nargs="+", required=True)
+    tverify.add_argument("--scenarios-dir", type=Path, default=DEFAULT_SCENARIOS)
+
+    rcmd = commands.add_parser("research")
+    rcmd.add_argument("contract", type=Path)
+    rcmd.add_argument("--materials-dir", type=Path, default=Path("materials"))
+    rcmd.add_argument("--scenarios-dir", type=Path, default=DEFAULT_SCENARIOS)
     return parser
+
+
+DEFAULT_SCENARIOS = Path("templates") / "scenarios"
 
 
 def _wizard_answer(session_path: Path, field: str, value: str) -> int:
@@ -409,6 +436,80 @@ def _resolve_materials_dir(args: argparse.Namespace) -> Path:
     if explicit is not None:
         return explicit
     return args.materials_dir if hasattr(args, "materials_dir") else Path("materials")
+
+
+def _template_list(scenarios_dir: Path) -> int:
+    for item in templates_lib.list_templates(scenarios_dir):
+        print(f"{item['name']}\t[{item['status']}]\t{item['scenario']}")
+    return 0
+
+
+def _template_show(name: str, scenarios_dir: Path) -> int:
+    index = templates_lib.build_index(scenarios_dir)
+    if name not in index:
+        print(f"template {name!r} not found", file=sys.stderr)
+        return 2
+    try:
+        entry = templates_lib.load_template(scenarios_dir / index[name]["path"])
+    except templates_lib.TemplateError as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
+    print(
+        yaml.safe_dump(entry, sort_keys=False, allow_unicode=True),
+        end="",
+    )
+    return 0
+
+
+def _template_match(contract_path: Path, scenarios_dir: Path) -> int:
+    try:
+        contract = load_contract(contract_path)
+        signature = templates_lib.signature_from_contract(contract)
+        matched = templates_lib.match_scenario(signature, scenarios_dir)
+    except (templates_lib.TemplateError, ContractError, OSError, yaml.YAMLError) as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
+    if matched is None:
+        print("no verified template strictly matches this contract")
+        return 0
+    print(f"matched: {matched['name']} (verified by {matched['verified_by']})")
+    return 0
+
+
+def _template_propose(entry_path: Path, scenarios_dir: Path) -> int:
+    try:
+        entry = templates_lib.load_template(entry_path)
+        target = templates_lib.propose_template(entry, scenarios_dir)
+    except templates_lib.TemplateError as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
+    print(f"proposed draft -> {target}")
+    return 0
+
+
+def _template_verify(name: str, scenarios_dir: Path, verified_by: list[str]) -> int:
+    try:
+        target = templates_lib.verify_template(name, scenarios_dir, verified_by)
+    except templates_lib.TemplateError as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
+    print(f"verified -> {target}")
+    return 0
+
+
+def _research_needs(contract_path: Path, materials_dir: Path, scenarios_dir: Path) -> int:
+    try:
+        contract = load_contract(contract_path)
+        needs = research.identify_research_needs(
+            contract,
+            materials_dir=materials_dir,
+            scenarios_dir=scenarios_dir,
+        )
+    except (research.ValueError, ContractError, OSError, yaml.YAMLError) as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
+    print(research.render_needs(needs))
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -469,6 +570,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.wizard_command == "dump":
             return _wizard_dump(args.session, args.out)
         raise AssertionError(f"unhandled wizard command: {args.wizard_command}")
+    if args.command == "template":
+        if args.template_command == "list":
+            return _template_list(args.scenarios_dir)
+        if args.template_command == "show":
+            return _template_show(args.name, args.scenarios_dir)
+        if args.template_command == "match":
+            return _template_match(args.contract, args.scenarios_dir)
+        if args.template_command == "propose":
+            return _template_propose(args.entry, args.scenarios_dir)
+        if args.template_command == "verify":
+            return _template_verify(args.name, args.scenarios_dir, args.verified_by)
+        raise AssertionError(f"unhandled template command: {args.template_command}")
+    if args.command == "research":
+        return _research_needs(args.contract, args.materials_dir, args.scenarios_dir)
     raise AssertionError(f"unhandled command: {args.command}")
 
 
