@@ -134,6 +134,11 @@ pair subtraction, and inverse reconstruction.
 For SFCW work, read [source-and-sfcw.md](references/source-and-sfcw.md). It
 covers source support, exact-tone extraction, source deconvolution, background
 handling, frequency grids, inverse transforms, and envelope construction.
+Before promoting an SFCW processing result, run the packaged
+`gprmax-skill validate-source <config.json> --project-root <study>` gate with
+the actual source array. A blocking source or SFCW policy result returns exit
+code 2 and stops downstream processing evidence; preserve both the gate report
+and its processing-detail sidecar in the study package.
 
 ## Match the metric to the claim
 

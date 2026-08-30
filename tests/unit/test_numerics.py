@@ -48,10 +48,24 @@ def test_cfl_dt_cubic_and_anisotropic():
 
 def test_check_cfl_detects_violation():
     limit = numerics.cfl_dt_s(0.05)
+    at_limit = numerics.check_cfl(0.05, None, None, limit)
+    assert at_limit.ok is True
+    assert at_limit.solver_ok is True
+    assert at_limit.project_safety_fraction is None
     good = numerics.check_cfl(0.05, None, None, limit * 0.9)
     assert good.ok is True
     bad = numerics.check_cfl(0.05, None, None, limit * 1.1)
     assert bad.ok is False
+
+
+def test_check_cfl_distinguishes_declared_project_margin():
+    limit = numerics.cfl_dt_s(0.05)
+    check = numerics.check_cfl(
+        0.05, None, None, limit * 0.98, safety_fraction=0.95
+    )
+    assert check.solver_ok is True
+    assert check.project_ok is False
+    assert check.ok is False
 
 
 def test_two_way_and_window():
@@ -72,6 +86,11 @@ def test_pml_clearance_per_axis():
 def test_grid_cells_total():
     total = numerics.grid_cells_total((10, 5, 5), (0.05, 0.05, 0.05))
     assert total == (10 / 0.05) * (5 / 0.05) * (5 / 0.05)
+
+
+def test_grid_cells_total_rejects_unaligned_extent_instead_of_ceiling():
+    with pytest.raises(ValueError, match="integer multiple"):
+        numerics.grid_cells_total((10.01, 5, 5), (0.05, 0.05, 0.05))
 
 
 def test_estimate_resources_interval():
@@ -111,9 +130,28 @@ def test_numerics_report_structure():
     assert report["mesh"]["cells_per_wavelength"]["Nz"] > 0
     assert report["window"]["ok"] is True
     assert report["cfl"]["explicit_dt"] is False
+    assert report["cfl"]["project_safety_fraction"] is None
     assert report["resources"]["is_estimate"] is True
     assert report["resources"]["runtime_hours_max"] >= report["resources"]["runtime_hours_min"]
     assert report["pml"]["thickness_m"]["x"] == pytest.approx(0.5)
+
+
+def test_numerics_report_marks_missing_pml_unknown():
+    report = numerics.numerics_report(
+        eps_r=2.8,
+        max_frequency_hz=240e6,
+        cells_m=(0.05, 0.05, 0.05),
+        domain_m=(60, 16, 7),
+        target_distance_m=80.0,
+        window_s=2.0e-6,
+        pml_layers=None,
+    )
+    assert report["pml"] == {
+        "layers": None,
+        "source": "not_provided",
+        "status": "UNKNOWN",
+        "thickness_m": None,
+    }
 
 
 def test_report_to_text_covers_sections():

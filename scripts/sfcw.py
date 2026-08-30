@@ -1,11 +1,11 @@
 """SFCW processing chains and waveform synthesis.
 
-Three equivalent routes are supported and must be *declared* per study — none
+Three processing routes are supported and must be *declared* per study — none
 is treated as the one universal method:
 
 - ``direct_per_tone``: run each tone separately, extract the complex sample by
   quadrature mixing, and inverse-transform to an A-scan;
-- ``impulse_lti`` (Liu & Xiao 2021, the recommended configuration): run a
+- ``impulse_lti`` (the noiseless Liu & Xiao 2021 core route): run a
   single impulse (or user-defined) excitation to obtain the impulse response
   ``h[n]``, convolve it in the time domain with each ramped tone, mix/extract,
   and inverse-transform. One FDTD run substitutes for per-tone runs;
@@ -16,8 +16,8 @@ is treated as the one universal method:
 
 Discipline: complex quantities stay complex until the final time-domain
 product; every tone grid, band, window, and regularisation is a recorded
-parameter; envelopes are computed with a numpy analytic-signal construction
-(no SciPy dependency).
+parameter.  A complex range-compressed trace uses its magnitude as envelope;
+a real trace uses a numpy analytic-signal construction (no SciPy dependency).
 
 All functions are pure numpy and deterministic; no gprMax invocation happens
 here.
@@ -25,9 +25,17 @@ here.
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+import hashlib
+from typing import Any, Sequence
 
 import numpy as np
+
+from scripts.sfcw_math import (
+    deembed_delay,
+    exact_dtft,
+    uniform_frequency_step,
+    wiener_deconvolve,
+)
 
 
 # --------------------------------------------------------------------------
@@ -38,7 +46,11 @@ def tone_grid(f_lo_hz: float, f_hi_hz: float, df_hz: float) -> np.ndarray:
     """Uniform tone grid: f_n = f_lo + n·df, band B = (N-1)df."""
     if not (0 < f_lo_hz < f_hi_hz and df_hz > 0):
         raise ValueError("require 0 < f_lo < f_hi and df > 0")
-    return np.arange(f_lo_hz, f_hi_hz + df_hz / 2, df_hz)
+    intervals = (f_hi_hz - f_lo_hz) / df_hz
+    rounded = int(round(intervals))
+    if not np.isclose(intervals, rounded, rtol=1e-12, atol=1e-12):
+        raise ValueError("band endpoints must lie exactly on the declared tone step")
+    return f_lo_hz + np.arange(rounded + 1, dtype=float) * df_hz
 
 
 def make_flatpulse(
@@ -87,20 +99,34 @@ def make_flatpulse(
 
 
 def make_sine_tone(
-    f_hz: float, dt_s: float, samples: int, ramp_phase: float = 0.1
+    f_hz: float,
+    dt_s: float,
+    samples: int,
+    ramp_k: float = 0.1,
+    *,
+    ramp_phase: float | None = None,
 ) -> np.ndarray:
-    """Single-tone continuous wave with a linear onset ramp.
+    """Single-tone continuous wave with Liu & Xiao's linear onset ramp.
 
-    The ramp (Liu & Xiao 2021, eq. 9) avoids Gibbs-type high-frequency
-    artefacts from a hard switch-on.
+    Equation (9) is ``k*f*t*sin(2*pi*f*t)`` while ``k*f*t < 1``, followed by
+    the unit-amplitude sine.  Therefore the ramp lasts ``1/(k*f)`` and is
+    continuous at its endpoint.  ``ramp_phase`` is a deprecated keyword alias
+    retained for M3 API compatibility; its value is interpreted as ``k``.
     """
+    if ramp_phase is not None:
+        if ramp_k != 0.1 and not np.isclose(ramp_k, ramp_phase):
+            raise ValueError("specify ramp_k or legacy ramp_phase, not both")
+        ramp_k = ramp_phase
+    if not (np.isfinite(f_hz) and f_hz > 0 and np.isfinite(dt_s) and dt_s > 0):
+        raise ValueError("f_hz and dt_s must be finite and positive")
+    if samples <= 0 or not (np.isfinite(ramp_k) and 0 < ramp_k < 1):
+        raise ValueError("samples > 0 and 0 < ramp_k < 1 required")
     t = np.arange(samples) * dt_s
     phase = 2 * np.pi * f_hz * t
     tone = np.sin(phase)
-    ramp_n = int(ramp_phase / (2 * np.pi * f_hz) / dt_s)
-    if ramp_n > 0:
-        t_ramp = t[:ramp_n]
-        tone[:ramp_n] = (f_hz * t_ramp) * np.sin(2 * np.pi * f_hz * t_ramp)
+    ramp_coordinate = ramp_k * f_hz * t
+    ramp = ramp_coordinate < 1.0
+    tone[ramp] *= ramp_coordinate[ramp]
     return tone
 
 
@@ -108,35 +134,69 @@ def make_sine_tone(
 # Complex sampling
 # --------------------------------------------------------------------------
 
-def quad_mix_extract(signal: np.ndarray, dt_s: float, f_hz: float) -> complex:
-    """Quadrature mixing + low-pass (whole-window average) -> complex sample.
+def quad_mix_extract(
+    signal: np.ndarray,
+    dt_s: float,
+    f_hz: float,
+    *,
+    integration_cycles: float = 4.0,
+    settling_samples: int = 0,
+) -> complex:
+    """Extract a steady-state complex tone by coherent quadrature fitting.
 
-    A delayed echo `sin(θ-φ)` with `φ = 2πf·τ` mixes to `I=A/2·cosφ`,
-    `Q=A/2·sinφ`; the returned sample is `I - jQ = A/2·e^{-jφ}`, i.e. the
-    negative-phase convention so that a target at delay `τ` appears at `+τ`
-    after reconstruction. Mixing with sin/cos and averaging removes the 2f
-    term; the baseband I/Q components survive.
+    For ``A*sin(theta-phi)``, fitting the sine and cosine references gives
+    ``I=A*cos(phi)`` and ``Q=-A*sin(phi)`` after the documented factor-two
+    mixer normalisation.  Thus ``I+jQ=A*exp(-j*phi)`` and positive propagation
+    delay reconstructs at positive delay.  The final cycle-count window
+    is used after ``settling_samples``; this is a coherent-integration
+    equivalent of low-pass filtering followed by steady-state sampling, not an
+    average over propagation zeros and ramp transients.
     """
-    if len(signal) == 0:
-        raise ValueError("empty signal")
-    t = np.arange(len(signal)) * dt_s
-    i = signal * np.sin(2 * np.pi * f_hz * t)
-    q = signal * np.cos(2 * np.pi * f_hz * t)
-    # I = A/2·cosφ, Q = -A/2·sinφ, so I + jQ = A/2·e^{-jφ}
-    return 2.0 * (np.mean(i) + 1j * np.mean(q))
+    y = np.asarray(signal, dtype=float)
+    if y.ndim != 1 or y.size == 0:
+        raise ValueError("signal must be a non-empty one-dimensional array")
+    if not (np.isfinite(dt_s) and dt_s > 0 and np.isfinite(f_hz) and f_hz > 0):
+        raise ValueError("dt_s and f_hz must be finite and positive")
+    if not np.isfinite(integration_cycles) or integration_cycles <= 0:
+        raise ValueError("integration_cycles must be finite and positive")
+    if settling_samples < 0 or settling_samples >= y.size:
+        raise ValueError("settling_samples must lie within the signal")
+
+    requested = int(np.ceil(integration_cycles / (f_hz * dt_s)))
+    available = y.size - settling_samples
+    count = min(requested, available)
+    if count < 3:
+        raise ValueError("not enough steady-state samples for quadrature fitting")
+    start = y.size - count
+    if start < settling_samples:
+        start = settling_samples
+    t = np.arange(start, y.size, dtype=float) * dt_s
+    design = np.column_stack(
+        (np.sin(2.0 * np.pi * f_hz * t), np.cos(2.0 * np.pi * f_hz * t), np.ones_like(t))
+    )
+    coefficients, _, rank, _ = np.linalg.lstsq(design, y[start:], rcond=None)
+    if rank < 3:
+        raise ValueError("quadrature fit is rank deficient")
+    return complex(coefficients[0] + 1j * coefficients[1])
 
 
 def dft_at(signal: np.ndarray, dt_s: float, f_hz: float) -> complex:
     """Exact-tone complex evaluation (point-wise DFT). Not nearest-bin."""
-    t = np.arange(len(signal)) * dt_s
-    return np.sum(signal * np.exp(-1j * 2 * np.pi * f_hz * t))
+    return complex(exact_dtft(signal, dt_s, f_hz))
 
 
 def synthesize_tone_response(
-    impulse_response: np.ndarray, dt_s: float, f_hz: float, ramp_phase: float = 0.1
+    impulse_response: np.ndarray,
+    dt_s: float,
+    f_hz: float,
+    ramp_k: float = 0.1,
+    *,
+    ramp_phase: float | None = None,
 ) -> np.ndarray:
     """Per-tone receiver response = h[n] convolved with the ramped tone."""
-    tone = make_sine_tone(f_hz, dt_s, len(impulse_response), ramp_phase)
+    tone = make_sine_tone(
+        f_hz, dt_s, len(impulse_response), ramp_k, ramp_phase=ramp_phase
+    )
     full = np.convolve(impulse_response, tone, mode="full")
     return full[: len(impulse_response)]
 
@@ -145,14 +205,22 @@ def complex_samples_impulse_lti(
     impulse_response: np.ndarray,
     dt_s: float,
     frequencies: Sequence[float],
-    ramp_phase: float = 0.1,
+    ramp_k: float = 0.1,
+    *,
+    ramp_phase: float | None = None,
+    integration_cycles: float = 4.0,
+    settling_samples: int = 0,
 ) -> np.ndarray:
     """Liu & Xiao 2021 route: convolve h with each tone, mix/extract."""
     samples = [
         quad_mix_extract(
-            synthesize_tone_response(impulse_response, dt_s, f, ramp_phase),
+            synthesize_tone_response(
+                impulse_response, dt_s, f, ramp_k, ramp_phase=ramp_phase
+            ),
             dt_s,
             f,
+            integration_cycles=integration_cycles,
+            settling_samples=settling_samples,
         )
         for f in frequencies
     ]
@@ -160,7 +228,12 @@ def complex_samples_impulse_lti(
 
 
 def complex_samples_direct(
-    per_tone_traces: np.ndarray, dt_s: float, frequencies: Sequence[float]
+    per_tone_traces: np.ndarray,
+    dt_s: float,
+    frequencies: Sequence[float],
+    *,
+    integration_cycles: float = 4.0,
+    settling_samples: int = 0,
 ) -> np.ndarray:
     """direct_per_tone route: per-tone receiver traces already computed."""
     if np.ndim(per_tone_traces) != 2:
@@ -168,7 +241,13 @@ def complex_samples_direct(
     if len(per_tone_traces) != len(frequencies):
         raise ValueError("trace count must match tone count")
     samples = [
-        quad_mix_extract(per_tone_traces[i], dt_s, f)
+        quad_mix_extract(
+            per_tone_traces[i],
+            dt_s,
+            f,
+            integration_cycles=integration_cycles,
+            settling_samples=settling_samples,
+        )
         for i, f in enumerate(frequencies)
     ]
     return np.asarray(samples, dtype=complex)
@@ -177,54 +256,50 @@ def complex_samples_direct(
 def complex_samples_broadband(
     receiver_ez: np.ndarray,
     dt_s: float,
-    source_spectrum: np.ndarray,
-    frequencies: Sequence[float],
-    dt_source_s: float,
+    source_waveform: np.ndarray | None = None,
+    frequencies: Sequence[float] | None = None,
+    dt_source_s: float | None = None,
     regularisation: float = 1e-10,
     f_lo_hz: float | None = None,
     f_hi_hz: float | None = None,
+    *,
+    source_spectrum: np.ndarray | None = None,
 ) -> np.ndarray:
     """broadband_deconvolution route: exact-tone sampling + Wiener.
 
-    ``receiver_ez`` is the single broadband run; ``source_spectrum`` is the
-    source waveform's spectrum sampled on the receiver's time grid (passed as
-    a time-domain array with ``dt_source_s``). Frequencies outside the
+    ``receiver_ez`` is the single broadband run; ``source_waveform`` is the
+    time-domain source sampled on the receiver time grid.  The legacy keyword
+    ``source_spectrum`` is accepted for compatibility but also denotes that
+    time-domain waveform. Frequencies outside the
     selected band are excluded after deconvolution.
     """
-    s_time = np.asarray(source_spectrum, dtype=float)
+    if source_waveform is None:
+        source_waveform = source_spectrum
+    elif source_spectrum is not None:
+        raise ValueError("specify source_waveform or legacy source_spectrum, not both")
+    if source_waveform is None or frequencies is None or dt_source_s is None:
+        raise ValueError("source waveform, frequencies, and dt_source_s are required")
+    s_time = np.asarray(source_waveform, dtype=float)
     r_time = np.asarray(receiver_ez, dtype=float)
     if abs(dt_source_s - dt_s) / dt_s > 1e-6:
         raise ValueError("source and receiver must share the same time grid")
     if len(s_time) != len(r_time):
         raise ValueError("source and receiver sample counts must match")
 
-    s_spectrum = np.fft.fft(s_time)
-    r_spectrum = np.fft.fft(r_time)
-    n = len(r_time)
-    freqs = np.fft.fftfreq(n, dt_s)
-
-    def _spectrum_at(f_hz: float) -> complex:
-        # exact evaluation by spectral interpolation at a single tone
-        # (point-wise DFT of the time series is equivalent; use it directly)
-        return dft_at(r_time, dt_s, f_hz)
-
-    samples: list[complex] = []
-    for f in frequencies:
-        if f_lo_hz is not None and f < f_lo_hz:
-            continue
-        if f_hi_hz is not None and f > f_hi_hz:
-            continue
-        e = _spectrum_at(f)
-        s = _spectrum_from_fft(s_spectrum, freqs, f)
-        denom = np.abs(s) ** 2 + regularisation * np.max(np.abs(s_spectrum) ** 2)
-        samples.append(e * np.conj(s) / denom)
-    return np.asarray(samples, dtype=complex)
-
-
-def _spectrum_from_fft(spectrum: np.ndarray, freqs: np.ndarray, f_hz: float) -> complex:
-    """Evaluate the FFT spectrum at an arbitrary tone by linear interpolation."""
-    index = np.argmin(np.abs(freqs - f_hz))
-    return spectrum[index]
+    selected = np.asarray(
+        [
+            f
+            for f in frequencies
+            if (f_lo_hz is None or f >= f_lo_hz)
+            and (f_hi_hz is None or f <= f_hi_hz)
+        ],
+        dtype=float,
+    )
+    if selected.size == 0:
+        raise ValueError("no frequencies remain inside the selected band")
+    receiver_values = np.asarray(exact_dtft(r_time, dt_s, selected))
+    source_values = np.asarray(exact_dtft(s_time, dt_source_s, selected))
+    return wiener_deconvolve(receiver_values, source_values, regularisation)
 
 
 # --------------------------------------------------------------------------
@@ -236,42 +311,39 @@ def reconstruct_ascan(
     zero_pad_factor: int = 8,
     window: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Zero-padded inverse transform of uniformly spaced complex samples.
+    """Zero-padded complex IFFT of a uniformly spaced stepped-frequency series.
 
-    The tone band is treated as the complex baseband spectrum (matching the
-    distance-compression convention: the A-scan is the range envelope, not a
-    carrier-resolved trace — DC/Nyquist handling is explicit below). Returns
-    a complex time-domain trace; use :func:`envelope` for the magnitude.
+    Sample zero is the measurement at ``f_lo`` and is retained.  This is the
+    Liu & Xiao (2021) fusion convention: tone order is the complex baseband
+    frequency axis and no artificial Hermitian mirror is added.  Zero padding
+    only interpolates delay and the ``Nfft/N`` scale preserves peak amplitude.
     """
     samples = np.asarray(complex_samples, dtype=complex)
     n = len(samples)
     if n < 2:
         raise ValueError("need at least two tones to reconstruct")
+    if not isinstance(zero_pad_factor, int) or zero_pad_factor < 1:
+        raise ValueError("zero_pad_factor must be a positive integer")
     if window is not None:
         if len(window) != n:
             raise ValueError("window length must match tone count")
         samples = samples * window
 
-    zp = n * zero_pad_factor
-    spec = np.zeros(zp, dtype=complex)
-    # The tone grid starts above DC, so bin 0 (0 Hz) carries no measurement:
-    # keep it at zero (band-pass reconstruction) to preserve Hermitian
-    # realness. The lowest tone's complex phase lives in the band content.
-    spec[:n] = samples
-    spec[0] = 0.0
-    # Hermitian negative frequencies for a real time-domain trace:
-    # spec[zp - (n-1) .. zp-1] = conj(samples[n-1 .. 1])
-    if n > 1:
-        spec[zp - n + 1 :] = np.conj(samples[:0:-1])
-    return np.fft.ifft(spec)
+    nfft = n * zero_pad_factor
+    return np.fft.ifft(samples, n=nfft) * (nfft / n)
 
 
 def envelope(ascan: np.ndarray) -> np.ndarray:
-    """Instantaneous-amplitude envelope via an analytic-signal construction.
+    """Return magnitude of a complex A-scan or Hilbert envelope of a real one.
 
-    numpy-only Hilbert: passband mask then IFFT. Nonnegative by construction.
+    The SFCW complex-IFFT product is already analytic/baseband, so its envelope
+    is ``abs(ascan)``.  For a real trace, a numpy-only Hilbert passband mask is
+    used.  Both results are nonnegative by construction.
     """
-    x = np.asarray(ascan, dtype=float)
+    raw = np.asarray(ascan)
+    if np.iscomplexobj(raw):
+        return np.abs(raw)
+    x = np.asarray(raw, dtype=float)
     n = len(x)
     X = np.fft.fft(x)
     h = np.zeros(n)
@@ -307,7 +379,11 @@ def run_chain(
     window: np.ndarray | None = None,
     zero_pad_factor: int = 8,
     regularisation: float = 1e-10,
-    ramp_phase: float = 0.1,
+    ramp_k: float = 0.1,
+    ramp_phase: float | None = None,
+    integration_cycles: float = 4.0,
+    settling_samples: int = 0,
+    source_delay_s: float = 0.0,
 ) -> dict[str, Any]:
     """Run one declared SFCW chain end-to-end.
 
@@ -317,15 +393,37 @@ def run_chain(
     """
     frequencies = None if frequencies is None else np.asarray(frequencies, dtype=float)
 
+    if frequencies is None:
+        raise ValueError("frequencies are required")
+    df_hz = uniform_frequency_step(frequencies)
+    if ramp_phase is not None:
+        if ramp_k != 0.1 and not np.isclose(ramp_k, ramp_phase):
+            raise ValueError("specify ramp_k or legacy ramp_phase, not both")
+        effective_ramp_k = ramp_phase
+    else:
+        effective_ramp_k = ramp_k
+    used_frequencies = frequencies
+
     if mode == "direct_per_tone":
         if frequencies is None or per_tone_traces is None:
             raise ValueError("direct_per_tone needs frequencies and per_tone_traces")
-        samples = complex_samples_direct(per_tone_traces, dt_s, frequencies)
+        samples = complex_samples_direct(
+            per_tone_traces,
+            dt_s,
+            frequencies,
+            integration_cycles=integration_cycles,
+            settling_samples=settling_samples,
+        )
     elif mode == "impulse_lti":
         if frequencies is None or impulse_response is None:
             raise ValueError("impulse_lti needs frequencies and impulse_response")
         samples = complex_samples_impulse_lti(
-            impulse_response, dt_s, frequencies, ramp_phase
+            impulse_response,
+            dt_s,
+            frequencies,
+            effective_ramp_k,
+            integration_cycles=integration_cycles,
+            settling_samples=settling_samples,
         )
     elif mode == "broadband_deconvolution":
         if receiver_ez is None or source_waveform is None:
@@ -334,6 +432,7 @@ def run_chain(
             )
         lo, hi = band_hz if band_hz is not None else (frequencies[0], frequencies[-1])
         freq_grid = np.asarray(frequencies, dtype=float)
+        used_frequencies = freq_grid[(freq_grid >= lo) & (freq_grid <= hi)]
         samples = complex_samples_broadband(
             receiver_ez,
             dt_s,
@@ -349,11 +448,61 @@ def run_chain(
             f"mode must be direct_per_tone | impulse_lti | broadband_deconvolution"
         )
 
+    if source_delay_s:
+        samples = deembed_delay(samples, used_frequencies, source_delay_s)
+
     a_scan = reconstruct_ascan(samples, zero_pad_factor=zero_pad_factor, window=window)
+    nfft = len(a_scan)
+    if window is None:
+        window_metadata: dict[str, Any] = {
+            "kind": "rectangular",
+            "coefficient_count": int(len(samples)),
+            "coefficient_sha256": None,
+        }
+    else:
+        coefficients = np.ascontiguousarray(np.asarray(window, dtype=np.float64))
+        window_metadata = {
+            "kind": "custom",
+            "coefficient_count": int(coefficients.size),
+            "coefficient_sha256": hashlib.sha256(coefficients.tobytes()).hexdigest(),
+        }
+    measurement_mode = {
+        "direct_per_tone": "sfcw_direct_per_tone",
+        "impulse_lti": "sfcw_equivalent_impulse_lti",
+        "broadband_deconvolution": "broadband_to_sfcw_equivalent",
+    }[mode]
     return {
         "mode": mode,
         "samples": samples,
+        "frequencies_hz": used_frequencies,
         "ascan": a_scan,
-        "envelope": envelope(a_scan.real),
-        "dt_s": dt_s,
+        "envelope": envelope(a_scan),
+        "fdtd_dt_s": dt_s,
+        "delay_bin_s": 1.0 / (nfft * df_hz),
+        "unambiguous_delay_s": 1.0 / df_hz,
+        "processing_parameters": {
+            "measurement_mode": measurement_mode,
+            "tone_count": int(len(used_frequencies)),
+            "first_tone_hz": float(used_frequencies[0]),
+            "last_tone_hz": float(used_frequencies[-1]),
+            "delta_f_hz": float(df_hz),
+            "window": window_metadata,
+            "zero_pad_factor": zero_pad_factor,
+            "quantitative_normalization": "none",
+            "regularisation": (
+                regularisation if mode == "broadband_deconvolution" else None
+            ),
+            "ramp_k": effective_ramp_k if mode == "impulse_lti" else None,
+            "integration_cycles": integration_cycles
+            if mode in {"direct_per_tone", "impulse_lti"}
+            else None,
+            "settling_samples": settling_samples
+            if mode in {"direct_per_tone", "impulse_lti"}
+            else None,
+            "source_delay_s": source_delay_s,
+            "noise_model": "none",
+            "liu2021_scope": "core_noiseless_lti"
+            if mode == "impulse_lti"
+            else "not_applicable",
+        },
     }

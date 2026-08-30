@@ -45,6 +45,8 @@ def test_tone_grid():
     assert len(freqs) == 101
     assert freqs[0] == pytest.approx(60e6)
     assert freqs[-1] == pytest.approx(160e6)
+    with pytest.raises(ValueError, match="tone step"):
+        sfcw.tone_grid(60e6, 160.5e6, 1e6)
 
 
 def test_make_flatpulse_normalised_with_band_energy():
@@ -59,10 +61,18 @@ def test_make_flatpulse_normalised_with_band_energy():
 
 
 def test_make_sine_tone_has_ramp():
-    tone = sfcw.make_sine_tone(F_LO, DT, N, ramp_phase=0.1)
+    k = 0.1
+    tone = sfcw.make_sine_tone(F_LO, DT, N, ramp_k=k)
     assert len(tone) == N
-    # first sample is suppressed by the ramp (not a hard switch)
-    assert abs(tone[0]) < 1e-3
+    t = np.arange(N) * DT
+    expected = np.sin(2 * np.pi * F_LO * t)
+    coordinate = k * F_LO * t
+    expected[coordinate < 1] *= coordinate[coordinate < 1]
+    assert np.allclose(tone, expected)
+    # Legacy keyword is an alias for Liu's k, not the old phase-duration rule.
+    assert np.allclose(
+        tone, sfcw.make_sine_tone(F_LO, DT, N, ramp_phase=k)
+    )
 
 
 def test_impulse_lti_recovers_reflections():
@@ -120,11 +130,12 @@ def test_broadband_deconvolution_matches_impulse_lti():
 
 
 def test_reconstruct_keeps_time_close_to_real():
-    samples = np.exp(1j * 2 * np.pi * 100e6 * (30e-9 + np.arange(101) * 0.0))
-    samples = np.exp(1j * 2 * np.pi * 100e6 * 30e-9) * np.ones(101)
+    samples = np.ones(101, dtype=complex)
     ascan = sfcw.reconstruct_ascan(samples, zero_pad_factor=8)
-    # Hermitian construction -> imaginary part is tiny relative to real part
-    assert np.max(np.abs(ascan.imag)) / max(np.max(np.abs(ascan.real)), 1e-12) < 1e-6
+    # A constant complex baseband spectrum peaks at zero delay.  The first
+    # measured tone is retained; no artificial Hermitian mirror is imposed.
+    assert np.argmax(np.abs(ascan)) == 0
+    assert np.abs(ascan[0]) == pytest.approx(1.0)
 
 
 def test_run_chain_all_modes_have_shape():
@@ -148,6 +159,18 @@ def test_run_chain_all_modes_have_shape():
         assert result["mode"] == mode
         assert result["samples"].shape == freqs.shape
         assert result["envelope"].ndim == 1
+        assert result["delay_bin_s"] == pytest.approx(
+            1.0 / (DF * len(result["ascan"]))
+        )
+        assert result["unambiguous_delay_s"] == pytest.approx(1.0 / DF)
+        assert result["fdtd_dt_s"] == DT
+        assert "dt_s" not in result
+        parameters = result["processing_parameters"]
+        assert parameters["tone_count"] == len(freqs)
+        assert parameters["delta_f_hz"] == pytest.approx(DF)
+        assert parameters["zero_pad_factor"] == 8
+        assert parameters["quantitative_normalization"] == "none"
+        assert parameters["noise_model"] == "none"
 
 
 def test_run_chain_rejects_missing_inputs():

@@ -343,7 +343,7 @@ def _numerics_from_answers(session: Session) -> dict[str, Any] | None:
     Returns None (with a reason attached to the caller) if any required
     numeric input is missing. ``window`` is derived from the two-way travel
     with a stated 1.5× margin — a declared rule, not a placeholder material
-    value; PML is reported only when ``pml_layers`` was given.
+    value; PML remains explicitly UNKNOWN unless ``pml_layers`` was given.
     """
     missing: list[str] = []
     medium_eps_r = session.answers.get("medium_eps_r")
@@ -369,15 +369,18 @@ def _numerics_from_answers(session: Session) -> dict[str, Any] | None:
     two_way = numerics.two_way_travel_s(target_distance_m, eps_r)
     window_s = two_way * 1.5  # stated margin rule
     pml_layers = session.answers.get("pml_layers")
-    report = numerics.numerics_report(
-        eps_r=eps_r,
-        max_frequency_hz=high_hz,
-        cells_m=cells_m,  # type: ignore[arg-type]
-        domain_m=tuple(domain_m),  # type: ignore[arg-type]
-        target_distance_m=target_distance_m,
-        window_s=window_s,
-        pml_layers=pml_layers if pml_layers is not None else 10,
-    )
+    try:
+        report = numerics.numerics_report(
+            eps_r=eps_r,
+            max_frequency_hz=high_hz,
+            cells_m=cells_m,  # type: ignore[arg-type]
+            domain_m=tuple(domain_m),  # type: ignore[arg-type]
+            target_distance_m=target_distance_m,
+            window_s=window_s,
+            pml_layers=pml_layers,
+        )
+    except ValueError as error:
+        raise WizardError(f"numeric setup invalid: {error}") from error
     report["window"]["derived_from"] = "two-way travel × 1.5 (stated margin rule)"
     return report
 
@@ -410,9 +413,18 @@ def _contract_draft(
     session: Session, recommendations: Mapping[str, Mapping[str, str]]
 ) -> dict[str, Any]:
     factors = list(session.answers.get("scan_factors", []))
+    # Keep the public contract vocabulary aligned with SKILL.md:
+    # single_variable | multi_factor.  The subtype preserves the important
+    # distinction between a single case and an actual one-factor sweep.
+    design_type = "multi_factor" if len(factors) > 1 else "single_variable"
+    design_subtype = "single_case" if not factors else (
+        "one_factor" if len(factors) == 1 else "factorial"
+    )
+    sfcw_enabled = chosen_sfcw(recommendations)
     return {
         "project": {
-            "design_type": "multi_factor" if factors else "single_variable",
+            "design_type": design_type,
+            "design_subtype": design_subtype,
             "factors": factors,
             "invariants": [],
             "note": "factors declared by the user; other parameters are fixed controls",
@@ -428,10 +440,13 @@ def _contract_draft(
             "parameter_source": "assumed",
         },
         "waveform": {
-            "excitation_mode": (
-                "impulse_lti" if chosen_sfcw(recommendations) else "pulse_broadband"
-            ),
-            "measurement_mode": "time_domain",
+            # ``excitation_mode`` is retained for the current schema and old
+            # consumers.  The three explicit fields prevent a processing
+            # route from being mistaken for a solver excitation.
+            "excitation_mode": "unit_impulse" if sfcw_enabled else "pulse_broadband",
+            "solver_excitation": "unit_impulse" if sfcw_enabled else "pulse_broadband",
+            "measurement_mode": "sfcw_equivalent" if sfcw_enabled else "time_domain",
+            "processing_route": "impulse_lti" if sfcw_enabled else "direct_time_domain",
             "band_mhz": session.answers.get("band_mhz"),
         },
         "numerics": {

@@ -107,7 +107,10 @@ def test_dump_full_payload(tmp_path: Path):
     assert payload["numerics"]["mesh"]["ok"] is True
 
     contract = payload["contract_draft"]
-    assert contract["waveform"]["excitation_mode"] == "impulse_lti"
+    assert contract["waveform"]["excitation_mode"] == "unit_impulse"
+    assert contract["waveform"]["solver_excitation"] == "unit_impulse"
+    assert contract["waveform"]["measurement_mode"] == "sfcw_equivalent"
+    assert contract["waveform"]["processing_route"] == "impulse_lti"
     assert contract["geometry"]["target_level"] == "L3"
 
 
@@ -151,14 +154,38 @@ def test_dump_without_numeric_inputs_marks_unknown(tmp_path: Path):
 def test_contract_factors_strictly_explicit(tmp_path: Path):
     session = _complete_session(tmp_path)
     payload = wizard.dump(session)
-    # No scan_factors declared -> single_variable even though many parameters exist
+    # No scan factors means a single controlled case, not a one-factor sweep.
     assert payload["contract_draft"]["project"]["design_type"] == "single_variable"
+    assert payload["contract_draft"]["project"]["design_subtype"] == "single_case"
     assert payload["contract_draft"]["project"]["factors"] == []
 
     wizard.answer(session, "scan_factors", "target_depth_m")
     payload = wizard.dump(session)
-    assert payload["contract_draft"]["project"]["design_type"] == "multi_factor"
+    assert payload["contract_draft"]["project"]["design_type"] == "single_variable"
+    assert payload["contract_draft"]["project"]["design_subtype"] == "one_factor"
     assert payload["contract_draft"]["project"]["factors"] == ["target_depth_m"]
+
+    wizard.answer(session, "scan_factors", "target_depth_m,band_mhz")
+    payload = wizard.dump(session)
+    assert payload["contract_draft"]["project"]["design_type"] == "multi_factor"
+    assert payload["contract_draft"]["project"]["design_subtype"] == "factorial"
+
+
+def test_dump_does_not_invent_pml_default(tmp_path: Path):
+    session = _complete_session(tmp_path)
+    session.answers.pop("pml_layers", None)
+    wizard.save_session(session)
+    payload = wizard.dump(session)
+    assert payload["numerics"]["pml"]["status"] == "UNKNOWN"
+    assert payload["numerics"]["pml"]["layers"] is None
+    assert payload["contract_draft"]["numerics"]["pml_layers"] == "unknown"
+
+
+def test_dump_blocks_unaligned_domain_instead_of_silently_rounding(tmp_path: Path):
+    session = _complete_session(tmp_path)
+    wizard.answer(session, "domain_m", "60.01,16,7")
+    with pytest.raises(wizard.WizardError, match="integer multiple"):
+        wizard.dump(session)
 
 
 def test_dump_to_yaml_serialises(tmp_path: Path):

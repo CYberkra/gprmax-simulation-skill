@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -9,7 +10,10 @@ from typing import Any
 
 import yaml
 from jsonschema import Draft202012Validator
+import numpy as np
 
+from scripts.audit_sfcw import audit_sfcw
+from scripts.audit_source import audit_source
 from scripts.contracts import ContractError, load_contract
 from scripts.core import GateContext, GateResult, GateState, write_json
 from scripts.fidelity import FidelityLevel, PromotionDecision, can_promote
@@ -132,6 +136,75 @@ def _preflight(contract_path: Path, project_root: Path) -> int:
             )
         ]
         write_gate_report(report_path, sanitized)
+        return 2
+    return 2 if any(result.state is GateState.BLOCK for result in results) else 0
+
+
+def _source_registry() -> GateRegistry:
+    registry = GateRegistry()
+    registry.register("validate-source", "source", audit_source)
+    registry.register("validate-source", "sfcw", audit_sfcw, depends_on=("source",))
+    return registry
+
+
+def _load_source_array(path: Path, key: str | None) -> np.ndarray:
+    loaded = np.load(path, allow_pickle=False)
+    if isinstance(loaded, np.lib.npyio.NpzFile):
+        try:
+            names = loaded.files
+            selected = key
+            if selected is None:
+                if len(names) != 1:
+                    raise ValueError("--source-key is required when an NPZ has multiple arrays")
+                selected = names[0]
+            if selected not in names:
+                raise ValueError(f"source key {selected!r} is absent from {path}")
+            return np.asarray(loaded[selected])
+        finally:
+            loaded.close()
+    if key is not None:
+        raise ValueError("--source-key is only valid for NPZ input")
+    return np.asarray(loaded)
+
+
+def _validate_source(
+    config_path: Path,
+    project_root: Path,
+    source_array: Path | None,
+    source_key: str | None,
+) -> int:
+    report_path = project_root / "gates" / "validate-source.json"
+    details_path = project_root / "gates" / "validate-source-details.json"
+    try:
+        config = _read_json_object(config_path)
+        artifacts: dict[str, Any] = {
+            "config_path": str(config_path),
+            "config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
+        }
+        if source_array is not None:
+            artifacts["source_signal"] = _load_source_array(source_array, source_key)
+            artifacts["source_array_path"] = str(source_array)
+        elif source_key is not None:
+            raise ValueError("--source-key requires --source-array")
+        context = GateContext(project_root=project_root, contract=config, artifacts=artifacts)
+        results = run_stage(_source_registry(), "validate-source", context)
+        write_gate_report(report_path, results)
+        serializable = {
+            key: value
+            for key, value in context.artifacts.items()
+            if key != "source_signal"
+        }
+        write_json(details_path, serializable)
+    except (OSError, ValueError, json.JSONDecodeError, GateContractError) as error:
+        result = GateResult(
+            "source_config",
+            GateState.BLOCK,
+            getattr(error, "code", "BLOCK_SOURCE_CONFIG"),
+            str(error),
+            evidence=(str(config_path),),
+            invalidates=("processing", "metrics", "claims"),
+        )
+        write_gate_report(report_path, [result])
         return 2
     return 2 if any(result.state is GateState.BLOCK for result in results) else 0
 
@@ -262,6 +335,12 @@ def _parser() -> argparse.ArgumentParser:
     preflight.add_argument("contract", type=Path)
     preflight.add_argument("--project-root", type=Path, required=True)
 
+    validate_source = commands.add_parser("validate-source")
+    validate_source.add_argument("config", type=Path)
+    validate_source.add_argument("--project-root", type=Path, required=True)
+    validate_source.add_argument("--source-array", type=Path)
+    validate_source.add_argument("--source-key")
+
     promote = commands.add_parser("promote")
     promote.add_argument("requested", choices=tuple(level.name for level in FidelityLevel))
     promote.add_argument("--project-root", type=Path, required=True)
@@ -351,6 +430,13 @@ def main(argv: list[str] | None = None) -> int:
         raise AssertionError(f"unhandled material command: {args.material_command}")
     if args.command == "preflight":
         return _preflight(args.contract, args.project_root)
+    if args.command == "validate-source":
+        return _validate_source(
+            args.config,
+            args.project_root,
+            args.source_array,
+            args.source_key,
+        )
     if args.command == "promote":
         return _promote(
             FidelityLevel[args.requested],

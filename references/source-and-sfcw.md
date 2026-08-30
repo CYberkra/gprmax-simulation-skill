@@ -21,6 +21,45 @@ formed. Nearest FFT-bin sampling is not exact-tone extraction for off-grid
 physical tones; use a documented DTFT/DFT evaluation, or validate an equivalent
 complex interpolation method.
 
+## Distinguish the Liu 2021 complex profile from a real bandpass trace
+
+For the Liu 2021 impulse-LTI route, synthesize each ramped continuous-wave
+response from the common impulse response, extract steady-state quadrature
+samples on the declared tone grid, and form the complex sequence
+`I + jQ`. Reconstruct the complex delay profile by applying an IFFT directly to
+that uniformly spaced sequence. Do not discard the first measured tone merely
+because it occupies index zero in the baseband sequence, and do not add a
+Hermitian counterpart to this complex-profile path.
+
+If a real carrier-resolved bandpass trace is requested instead, expose it as a
+separate reconstruction product. Place positive-frequency samples at their
+actual absolute-frequency bins and construct the corresponding Hermitian
+negative-frequency samples. Never mix this convention with the baseband
+complex-profile convention.
+
+For `NFFT` samples and tone spacing `delta_f`, report the reconstructed delay
+bin and unambiguous delay explicitly:
+
+- `delay_bin_s = 1 / (NFFT * delta_f)`;
+- `unambiguous_delay_s = 1 / delta_f`.
+
+These are not the FDTD solver timestep. Zero padding changes `delay_bin_s` for
+display sampling but does not change the physical bandwidth resolution or the
+unambiguous delay.
+
+When claiming Liu 2021 alignment, implement its ramp as `k*f*t` while
+`k*f*t < 1` and unity thereafter, then perform low-pass or an explicitly
+equivalent steady-state coherent integration after quadrature mixing. An
+unqualified whole-record mean is not equivalent when the record includes
+pre-arrival zeros, ramp-up, or convolution transients. Record any constant I/Q
+amplitude scaling (for example, multiplying both branches by two).
+
+The impulse-LTI implementation is the paper's noiseless numerical core unless
+the processing record explicitly declares a per-tone receive-noise model,
+random seed, noise power/correlation, injection point, and matched comparison
+gain. Do not describe the noiseless route as a reproduction of the paper's
+noise-robustness experiment.
+
 ## Impulse-response SFCW synthesis (Liu & Xiao 2021)
 
 The default SFCW-equivalent method follows Liu & Xiao (2021,
