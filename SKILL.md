@@ -49,6 +49,13 @@ Probe the local environment (GPU, memory, disk, Python version, gprMax
 presence) to know what is available, but never decide the run environment on
 the user's behalf; the user chooses local or server.
 
+For the interview order, answer validation, and configuration-axis
+recommendations (including the L1–L4 irregular-geometry tiers and fidelity
+intents), read
+[guided-setup.md](references/guided-setup.md). For the material-library schema,
+research-need identification, and scene-template progressive accumulation, read
+[study-materials.md](references/study-materials.md).
+
 ## Run controlled batches
 
 For a parameter scan, define dimensions in the contract or a CSV matrix, expand
@@ -166,6 +173,10 @@ Maintain a standard directory layout: `README.md`, `simulation_contract.yaml`,
 (`01_20260830_SFCW_SLIDE_WET`). Never silently change physical parameters;
 record every intentional change in the study README. Create a new dated
 directory for a materially changed model; do not modify frozen packages.
+
+Read [study-layout.md](references/study-layout.md) for the full layout, naming
+conventions, discipline rules, and the `gprmax-skill layout audit` check before
+scaffolding or auditing a study.
 
 ## Close the evidence package
 

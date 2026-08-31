@@ -396,12 +396,14 @@ SKILL.md（入口/编排）
 | §7、§13G/H（批量/结果处理） | `references/preflight-and-audit.md` | ✅ 已固化 |
 | §13E（源/SFCW 硬经验） | `references/source-and-sfcw.md` | ✅ 已固化 |
 | §13F（判据/声明纪律） | `references/interpretation-and-claims.md` | ✅ 已固化 |
-| §2（M1 向导）、§3（M2 调研/材料库）、§4（M3 配置轴）、§6（M5 环境探测）、§8（M8 文件夹管理） | `references/*` 模块说明 | ⬜ 仅草稿，未迁移（见注）|
+| §2（M1 向导）、§4（M3 配置轴） | `references/guided-setup.md`（wizard 流程/配置轴/不规则分层/拟真度）| ✅ 已固化 |
+| §3（M2 调研/材料库/模板库） | `references/study-materials.md`（材料 schema/调研需求/模板渐进积累）| ✅ 已固化 |
+| §6（M5 环境探测） | `references/numerical-model-validity.md`（Environment probe）| ✅ 已固化 |
+| §8（M8 文件夹管理） | `references/study-layout.md`（标准布局/命名/audit_layout）| ✅ 已固化 |
 | 附 A/B | 独立 case study（`templates/scenarios/` + 未证实观察）| ✅ 煤矿模板已入 `coal_tunnel_sfcw.yaml`；附 B 待归档 |
 
-> 注：M1-M3 向导/调研/配置轴与 M5 环境探测/M8 文件夹管理的模块说明目前仅存在于本草稿。
-> 代码已实现（`scripts/wizard.py`、`research.py`、`templates_lib.py`、`axes.py`、`probe_environment.py`、`scaffold.py`），
-> 但 references 尚无对应章节。迁移时机：待对应模块代码定稿后，把草稿 §2-4/§6/§8 压缩成 references 章节。
+> 注：M1-M3 向导/调研/配置轴与 M5 环境探测/M8 文件夹管理的模块说明已迁移到对应的 references 文件，
+> 本草稿 §2-4/§6/§8 保留为参考上下文。附 B 未证实观察待归档。
 
 ---
 

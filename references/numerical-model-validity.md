@@ -84,3 +84,21 @@ can be matched to real resources. The probe is informational only: it never
 decides whether to run locally or on a server — that decision belongs to the
 user. Do not collect CPU model, usernames, directory listings, file contents,
 process lists, or network connections.
+
+Use the probe to:
+
+- sanity-check that the study is feasible on this machine before designing the
+  run (for example, VRAM against the estimated model footprint at the selected
+  precision — fp32 vs fp64 differs by a factor of two);
+- surface a match hint when the estimated VRAM / runtime is close to or beyond
+  what the local device offers ("estimated 20 GB, local 24 GB — match 100%"
+  vs. "estimated 40 GB, local 24 GB — server needed"), so the environment
+  decision is informed by numbers;
+- report the gprMax version found, because CLI flags (for example `-gpu` vs
+  `--gpu`) and output layout are version-sensitive;
+- record the probe result in the study log so later audits can reproduce the
+  environment context.
+
+The probe output is a plain report (`probe_environment.py::format_report`) and
+a JSON snapshot (`probe_to_json`); both are artifacts of the study, not
+authoritative configuration.
