@@ -13,6 +13,7 @@ changes that invariant.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -140,6 +141,60 @@ def describe_layout(project_root: Path) -> list[str]:
 # stay read-only; input/executable material there indicates a write-back).
 _OUTPUTS_FORBIDDEN_SUFFIXES = (".py", ".in", ".sh", ".bat")
 
+# Suffixes treated as raw simulation evidence for hashing.
+_OUTPUTS_EVIDENCE_SUFFIXES = (".out", ".h5", ".hdf5")
+
+
+def sha256_file(path: Path) -> str:
+    """Streaming SHA-256 of a file's full content."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def output_hashes(study_root: Path) -> dict[str, str]:
+    """Map every evidence file in ``outputs/`` to its SHA-256 (relative name)."""
+    study_root = Path(study_root)
+    outputs = study_root / "outputs"
+    if not outputs.is_dir():
+        return {}
+    hashes: dict[str, str] = {}
+    for path in sorted(outputs.rglob("*")):
+        if path.is_file() and path.suffix.lower() in _OUTPUTS_EVIDENCE_SUFFIXES:
+            hashes[path.name] = sha256_file(path)
+    return hashes
+
+
+def record_output_hashes(study_root: Path) -> Path:
+    """Record SHA-256 of every evidence file under ``outputs/`` into manifest.
+
+    Writes ``manifest.json["outputs_sha256"] = {name: sha256, ...}``. Returns
+    the manifest path. Missing manifest raises ``ScaffoldError`` (fail-closed:
+    hashes without a manifest cannot be audited later).
+    """
+    study_root = Path(study_root)
+    manifest_path = study_root / "manifest.json"
+    if not manifest_path.is_file():
+        raise ScaffoldError(
+            f"{study_root} has no manifest.json — create the study skeleton first"
+        )
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ScaffoldError(f"{manifest_path} is unreadable JSON ({error})") from error
+    if not isinstance(manifest, dict):
+        raise ScaffoldError(f"{manifest_path} must contain a JSON object")
+
+    hashes = output_hashes(study_root)
+    manifest["outputs_sha256"] = hashes
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return manifest_path
+
 
 def audit_layout(study_root: Path) -> list[dict[str, str]]:
     """Audit a study directory against the standard layout discipline.
@@ -210,14 +265,56 @@ def audit_layout(study_root: Path) -> list[dict[str, str]]:
     else:
         add("outputs", "BLOCK", "outputs/ directory missing")
 
-    # 3. Study name convention (WARN — the name is a strong convention).
+    # 3. outputs/ hash integrity (raw-evidence immutability).
+    manifest_path = study_root / "manifest.json"
+    evidence = output_hashes(study_root)
+    recorded: dict[str, str] = {}
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if isinstance(manifest, dict) and isinstance(
+                manifest.get("outputs_sha256"), dict
+            ):
+                recorded = {
+                    str(k): str(v)
+                    for k, v in manifest["outputs_sha256"].items()
+                    if isinstance(v, str)
+                }
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            recorded = {}  # unreadable manifest: nothing to compare against
+    if evidence:
+        missing = sorted(set(evidence) - set(recorded))
+        mismatched = sorted(
+            name for name in evidence if name in recorded and recorded[name] != evidence[name]
+        )
+        if missing or mismatched:
+            parts = []
+            if missing:
+                parts.append(f"unrecorded evidence: {', '.join(missing[:5])}")
+            if mismatched:
+                parts.append(f"hash mismatch (evidence modified): {', '.join(mismatched[:5])}")
+            add(
+                "outputs_hashes",
+                "BLOCK",
+                "; ".join(parts) + " — run `layout hash` after a legitimate regeneration",
+            )
+        else:
+            add(
+                "outputs_hashes",
+                "OK",
+                f"{len(evidence)} evidence file(s) match manifest SHA-256",
+            )
+    else:
+        add("outputs_hashes", "WARN", "no raw evidence in outputs/ to hash")
+
+    # 4. Study name convention (WARN — the name is a strong convention).
     try:
         validate_study_name(study_root.name)
         add("naming", "OK", f"study name {study_root.name!r} matches <nn>_<yyyymmdd>_<TOPIC>")
     except ScaffoldError as error:
         add("naming", "WARN", str(error))
 
-    # 4. Stray study-root material.
+    # 5. Stray study-root material.
     stray = [
         p.name
         for p in study_root.iterdir()
@@ -235,7 +332,7 @@ def audit_layout(study_root: Path) -> list[dict[str, str]]:
     else:
         add("stray", "OK", "no stray scripts/inputs at study root")
 
-    # 5. Contract parseability.
+    # 6. Contract parseability.
     contract = study_root / "simulation_contract.yaml"
     if contract.is_file():
         try:

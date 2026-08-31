@@ -40,7 +40,11 @@ UPPER_SNAKE_CASE of `SCENARIO_TARGET_TYPE_TRACE` — e.g. `SLIDE_WET_H1_T007`.
 
 - `outputs/` is **immutable raw evidence** — `.in`, `.py`, `.sh`, `.bat` files
   are never placed there. Writing to `outputs/` after the run is a discipline
-  violation.
+  violation. Every evidence file (`.out`/`.h5`/`.hdf5`) is SHA-256 hashed into
+  `manifest.json["outputs_sha256"]` via `gprmax-skill layout hash`; `layout
+  audit` compares live files against the recorded hashes and BLOCKs on
+  tampering or unrecorded evidence. Re-hash explicitly after a legitimate
+  regeneration.
 - `results/` holds derived conclusions; anything in `results/` must be
   reproducible from `outputs/` + `analysis/`.
 - `evidence/` holds audit reports, manifest snapshots, and hash checksums so
@@ -60,6 +64,7 @@ layout and returns a list of findings with severity `OK | WARN | BLOCK`:
 | standard directories present | missing `materials/`, `waveforms/`, `cases/`, `scripts/`, `tests/`, `logs/`, `outputs/`, `analysis/`, `results/`, `evidence/` | BLOCK |
 | standard files present | missing `README.md`, `simulation_contract.yaml`, `manifest.json` | BLOCK |
 | `outputs/` read-only | empty `outputs/` (WARN); `.py`/`.in`/`.sh`/`.bat` inside `outputs/` (BLOCK) | WARN / BLOCK |
+| `outputs/` hash integrity | evidence file unrecorded in `manifest.json["outputs_sha256"]` or hash mismatch (evidence modified) | BLOCK |
 | stray study-root material | `.py`/`.in` files directly under the study root (belong in `scripts/` or `cases/`) | WARN |
 | naming convention | study name does not match `<nn>_<yyyymmdd>_<TOPIC>` | WARN |
 | contract parseability | `simulation_contract.yaml` missing, unreadable, or not a mapping | BLOCK |

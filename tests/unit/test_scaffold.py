@@ -9,6 +9,8 @@ from scripts.scaffold import (
     audit_layout,
     create_study_skeleton,
     describe_layout,
+    output_hashes,
+    record_output_hashes,
     validate_study_name,
 )
 
@@ -96,11 +98,13 @@ def test_audit_layout_fresh_skeleton_all_ok(tmp_path: Path):
     root = tmp_path / "01_20260830_SFCW_SLIDE_WET"
     create_study_skeleton(root, name=root.name)
     (root / "outputs" / "case.out").write_text("x", encoding="utf-8")
+    record_output_hashes(root)  # record hashes so the audit is clean
     findings = audit_layout(root)
     assert findings
     assert all(f["severity"] != "BLOCK" for f in findings)
     assert _severity(findings, "layout") == "OK"
     assert _severity(findings, "outputs") == "OK"
+    assert _severity(findings, "outputs_hashes") == "OK"
 
 
 def test_audit_layout_missing_directory_blocks(tmp_path: Path):
@@ -143,3 +147,72 @@ def test_audit_layout_non_mapping_contract_blocks(tmp_path: Path):
     (root / "simulation_contract.yaml").write_text("- just\n- a list\n", encoding="utf-8")
     findings = audit_layout(root)
     assert _severity(findings, "contract") == "BLOCK"
+
+
+# --------------------------------------------------------------------------
+# output hash recording and tamper detection
+# --------------------------------------------------------------------------
+
+def test_output_hashes_records_evidence_files(tmp_path: Path):
+    root = tmp_path / "study"
+    create_study_skeleton(root)
+    (root / "outputs" / "a.out").write_bytes(b"raw-evidence-a")
+    (root / "outputs" / "b.out").write_bytes(b"raw-evidence-b")
+    (root / "outputs" / "readme.txt").write_text("not evidence", encoding="utf-8")
+
+    hashes = output_hashes(root)
+    assert set(hashes) == {"a.out", "b.out"}  # .txt is not hashed
+    assert hashes["a.out"] != hashes["b.out"]
+
+
+def test_record_output_hashes_writes_manifest(tmp_path: Path):
+    root = tmp_path / "study"
+    create_study_skeleton(root)
+    (root / "outputs" / "a.out").write_bytes(b"x" * 1000)
+
+    path = record_output_hashes(root)
+    import json
+
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    assert "outputs_sha256" in manifest
+    assert manifest["outputs_sha256"]["a.out"] == output_hashes(root)["a.out"]
+
+
+def test_record_output_hashes_requires_manifest(tmp_path: Path):
+    root = tmp_path / "no_manifest"
+    root.mkdir()
+    with pytest.raises(ScaffoldError):
+        record_output_hashes(root)
+
+
+def test_audit_layout_blocks_unrecorded_evidence(tmp_path: Path):
+    root = tmp_path / "study"
+    create_study_skeleton(root)
+    (root / "outputs" / "a.out").write_bytes(b"x")
+    findings = audit_layout(root)
+    assert _severity(findings, "outputs_hashes") == "BLOCK"
+
+
+def test_audit_layout_blocks_tampered_evidence(tmp_path: Path):
+    root = tmp_path / "study"
+    create_study_skeleton(root)
+    (root / "outputs" / "a.out").write_bytes(b"original")
+    record_output_hashes(root)
+    (root / "outputs" / "a.out").write_bytes(b"TAMPERED")
+    findings = audit_layout(root)
+    assert _severity(findings, "outputs_hashes") == "BLOCK"
+    message = next(
+        f["message"] for f in findings if f["check"] == "outputs_hashes"
+    )
+    assert "hash mismatch" in message
+
+
+def test_audit_layout_ok_after_rehash(tmp_path: Path):
+    root = tmp_path / "study"
+    create_study_skeleton(root)
+    (root / "outputs" / "a.out").write_bytes(b"original")
+    record_output_hashes(root)
+    (root / "outputs" / "a.out").write_bytes(b"regenerated legitimately")
+    record_output_hashes(root)  # re-hash after legitimate regeneration
+    findings = audit_layout(root)
+    assert _severity(findings, "outputs_hashes") == "OK"

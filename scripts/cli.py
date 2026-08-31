@@ -26,7 +26,14 @@ import scripts.audit_precision as audit_prec
 import scripts.materials as materials
 import scripts.probe_environment as probe
 import scripts.wizard as wizard
-from scripts.scaffold import audit_layout, describe_layout, create_study_skeleton
+from scripts.scaffold import (
+    ScaffoldError,
+    audit_layout,
+    create_study_skeleton,
+    describe_layout,
+    output_hashes,
+    record_output_hashes,
+)
 import scripts.research as research
 import scripts.templates_lib as templates_lib
 import scripts.visualize as visualize
@@ -503,6 +510,8 @@ def _parser() -> argparse.ArgumentParser:
     lsub = lcmd.add_subparsers(dest="layout_command", required=True)
     laudit = lsub.add_parser("audit")
     laudit.add_argument("study_dir", type=Path, help="study directory to audit")
+    lhash = lsub.add_parser("hash")
+    lhash.add_argument("study_dir", type=Path, help="record SHA-256 of outputs/ into manifest.json")
     return parser
 
 
@@ -849,6 +858,17 @@ def _layout_audit(study_dir: Path) -> int:
     return 2 if blocking else 0
 
 
+def _layout_hash(study_dir: Path) -> int:
+    try:
+        path = record_output_hashes(study_dir)
+        hashes = output_hashes(study_dir)
+    except (ScaffoldError, ValueError, OSError) as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
+    print(f"recorded {len(hashes)} SHA-256 hash(es) -> {path}")
+    return 0
+
+
 def _sensitivity(args: argparse.Namespace) -> int:
     try:
         contract = load_contract(args.contract)
@@ -962,6 +982,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "layout":
         if args.layout_command == "audit":
             return _layout_audit(args.study_dir)
+        if args.layout_command == "hash":
+            return _layout_hash(args.study_dir)
         raise AssertionError(f"unhandled layout command: {args.layout_command}")
     raise AssertionError(f"unhandled command: {args.command}")
 
