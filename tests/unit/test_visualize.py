@@ -93,6 +93,48 @@ def test_process_and_plot_with_synthetic_out(tmp_path: Path):
     assert params["delay_bin_s"] > 0
 
 
+def test_read_ez_from_out_prefers_root_dt(tmp_path: Path):
+    """Regression: gprMax writes dt as a *root* attribute, not on the dataset
+    (fields_outputs.py). Reading a real .out layout must return the root dt."""
+    import h5py
+
+    dt = 0.1e-9
+    n = 1024
+    ez = np.zeros((1, 1, n))
+    ez[0, 0, 10] = 1.0
+
+    out_file = tmp_path / "real_layout.out"
+    with h5py.File(out_file, "w") as handle:
+        handle.attrs["gprMax"] = "3.1.6"
+        handle.attrs["Iterations"] = n
+        handle.attrs["nx_ny_nz"] = (50, 50, 50)
+        handle.attrs["dx_dy_dz"] = (0.05, 0.05, 0.05)
+        handle.attrs["dt"] = dt  # root attribute, like real gprMax output
+        handle.create_dataset("rxs/rx1/Ez", data=ez)
+
+    samples, read_dt = visualize.read_ez_from_out(out_file)
+    assert read_dt == pytest.approx(dt)
+    assert samples.shape == (1, n)
+
+
+def test_read_ez_from_out_falls_back_to_dataset_dt(tmp_path: Path):
+    """Non-gprMax producers may put dt on the dataset; the fallback must work."""
+    import h5py
+
+    dt = 2.0e-9
+    ez = np.zeros((1, 1, 64))
+    ez[0, 0, 5] = 1.0
+
+    out_file = tmp_path / "dataset_dt.out"
+    with h5py.File(out_file, "w") as handle:
+        dset = handle.create_dataset("rxs/rx1/Ez", data=ez)
+        dset.attrs["dt_s"] = dt  # no root dt → fall back to dataset attrs
+
+    samples, read_dt = visualize.read_ez_from_out(out_file)
+    assert read_dt == pytest.approx(dt)
+    assert samples.shape == (1, 64)
+
+
 def test_save_processing_parameters(tmp_path: Path):
     result = {
         "mode": "impulse_lti",

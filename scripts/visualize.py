@@ -32,9 +32,10 @@ class ProcessingError(ValueError):
 def read_ez_from_out(path: Path, dataset_key: str = "rxs/rx1/Ez") -> tuple[np.ndarray, float | None]:
     """Read the Ez receiver dataset from a gprMax ``.out`` file.
 
-    Returns ``(ez, dt_s)`` where ``dt_s`` comes from the dataset attributes
-    when available (``dt`` / ``dt_s``), else ``None``. The time series is the
-    last axis of the dataset.
+    Returns ``(ez, dt_s)`` where ``dt_s`` comes from the HDF5 root attribute
+    ``dt`` (where gprMax writes it, see ``fields_outputs.py``), falling back
+    to the dataset attributes (``dt_s`` / ``dt``) for compatibility with
+    non-gprMax producers. The time series is the last axis of the dataset.
     """
     try:
         import h5py
@@ -63,11 +64,19 @@ def read_ez_from_out(path: Path, dataset_key: str = "rxs/rx1/Ez") -> tuple[np.nd
     dt_s: float | None = None
     try:
         with h5py.File(path, "r") as handle:
-            attrs = dict(handle[dataset_key].attrs)
-            for key in ("dt_s", "dt"):
-                if key in attrs:
-                    dt_s = float(attrs[key])
+            # gprMax writes dt as a root attribute (fields_outputs.py);
+            # prefer it over dataset attrs.
+            root_attrs = dict(handle.attrs)
+            for key in ("dt", "dt_s"):
+                if key in root_attrs:
+                    dt_s = float(root_attrs[key])
                     break
+            if dt_s is None:
+                attrs = dict(handle[dataset_key].attrs)
+                for key in ("dt_s", "dt"):
+                    if key in attrs:
+                        dt_s = float(attrs[key])
+                        break
     except (OSError, KeyError, TypeError, ValueError):
         dt_s = None
     return samples, dt_s
