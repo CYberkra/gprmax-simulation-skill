@@ -315,3 +315,78 @@ def test_batch_initialise_reentry_guarded(tmp_path: Path):
     # explicit force re-creates from scratch
     batch.initialise_batch(tmp_path, _cases(2), force=True)
     assert batch.status_dashboard(tmp_path)["total"] == 2
+
+
+# --------------------------------------------------------------------------
+# model-establishment gate (single model first, then batch)
+# --------------------------------------------------------------------------
+
+def _established_study(tmp_path: Path) -> Path:
+    root = tmp_path / "01_20260830_SFCW_SLIDE_WET"
+    (root / "outputs").mkdir(parents=True)
+    (root / "outputs" / "single.out").write_text("raw", encoding="utf-8")
+    (root / "simulation_contract.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "model": {"dimension": "2.5d"},
+                "task": {"objective": "detection", "claim_scope": "numerical"},
+                "medium": {
+                    "model_type": "nondispersive",
+                    "parameter_source": "assumed",
+                    "medium_material": "clay",
+                    "target_material": "concrete",
+                },
+                "waveform": {
+                    "excitation_mode": "pulse_broadband",
+                    "measurement_mode": "time_domain",
+                    "band_mhz": "20-200",
+                },
+                "numerics": {"precision_requirement": "auto"},
+                "acceptance": {"negative_controls": [], "sensitivity_tests": []},
+                "evidence": {"required_outputs": [], "provenance_level": "strict"},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_model_establishment_ok_no_gaps(tmp_path: Path):
+    root = _established_study(tmp_path)
+    assert batch.model_establishment_gaps(root) == []
+
+
+def test_model_establishment_blocks_missing_contract(tmp_path: Path):
+    root = tmp_path / "study"
+    (root / "outputs").mkdir(parents=True)
+    gaps = batch.model_establishment_gaps(root)
+    assert any("simulation_contract.yaml" in gap for gap in gaps)
+
+
+def test_model_establishment_blocks_unknown_dimension(tmp_path: Path):
+    root = _established_study(tmp_path)
+    contract_path = root / "simulation_contract.yaml"
+    text = contract_path.read_text(encoding="utf-8")
+    # yaml.safe_dump renders the string "2.5d" unquoted
+    contract_path.write_text(text.replace("2.5d", "unknown"), encoding="utf-8")
+    gaps = batch.model_establishment_gaps(root)
+    assert any("dimension" in gap for gap in gaps)
+
+
+def test_model_establishment_blocks_no_outputs(tmp_path: Path):
+    root = _established_study(tmp_path)
+    (root / "outputs" / "single.out").unlink()
+    gaps = batch.model_establishment_gaps(root)
+    assert any("outputs/" in gap for gap in gaps)
+
+
+def test_require_model_established_raises_without_force(tmp_path: Path):
+    root = tmp_path / "study"
+    with pytest.raises(batch.BatchError, match="model not established"):
+        batch.require_model_established(root)
+
+
+def test_require_model_established_force_skips(tmp_path: Path):
+    root = tmp_path / "study"
+    assert batch.require_model_established(root, force=True)  # returns gaps list

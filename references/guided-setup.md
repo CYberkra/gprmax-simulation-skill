@@ -20,7 +20,7 @@ correct earlier answers:
 | `scenario` | `scenario_type`, `target_depth_m`, `domain_m` (opt), `pml_layers` (opt) | Scene positioning: tunnel / landslide / archaeology / geotechnical / inspection / other, target depth or range |
 | `target_medium` | `target_material`, `medium_material`, `medium_eps_r` (opt), `scan_factors` (opt) | Target and host medium; unknowns are marked `unknown` (research later); `scan_factors` declares multi-factor sweep factors vs. invariants |
 | `band_mode` | `needs_sfcw`, `band_mhz` | Whether the study needs an SFCW-system conclusion and the frequency range (known, or derived from target depth) |
-| `fidelity` | `fidelity`, `custom_cells_m` (opt) | Fidelity intent (see below) — drives antenna, irregularity, and grid tiers |
+| `fidelity` | `fidelity`, `dimension`, `custom_cells_m` (opt) | Fidelity intent (see below) + model dimension (2d/2.5d/3d) — drives antenna, irregularity, dimension, and grid tiers |
 | `environment` | `run_env` | local vs. server — decided by the user; the probe only informs |
 
 Rules:
@@ -53,7 +53,30 @@ always win).
 | Target geometry | regular (box/cylinder) / irregular L1–L4 | avoiding coherent artifacts from flat interfaces + fidelity |
 | Grid strategy | recommended from the above: dx/dy/dz, PML layers | cells/λ ≥ 10 + time window + domain size |
 | Numerical precision | auto fp32/fp64 | required dynamic range vs. fp32 floor (≈ −90 dB) |
+| Model dimension | 2d / 2.5d / 3d | project stage + fidelity (see below) |
 | Run environment | local / server (multi-GPU) | user decision; probe informs only |
+
+### Model dimension and project stage
+
+The model dimension is a first-class axis and must be declared before any run
+(2d = single-cell slice, TM mode; 2.5d = thin-slice 3D, 3–5 cells in the
+invariant direction, keeps 3D physics at lower cost; 3d = full 3D). gprMax's
+native 2D is a one-cell-thick slice and forces the source polarisation along
+the invariant direction (TM mode) — record that constraint when 2d is chosen.
+
+Stage-to-dimension recommendation (defaults; the user's explicit choice always
+wins):
+
+| Project stage | Recommended dimension |
+|---|---|
+| Quick screening / concept verification | 2d |
+| Parameter scan / intermediate validation | 2.5d |
+| Formal conclusion / criteria / publication | 3d |
+
+Deep-scene studies (tunnel, landslide) or studies needing an SFCW-system
+conclusion are nudged up one tier because formal conclusions need 3D physics.
+A 2d model can never certify an engineering or 3-D-objective claim (see
+`audit_geometry`).
 
 ### Irregular geometry tiers (L1–L4)
 

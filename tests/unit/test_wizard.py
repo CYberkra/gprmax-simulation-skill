@@ -19,6 +19,7 @@ def _complete_session(tmp_path: Path) -> wizard.Session:
         ("needs_sfcw", "true"),
         ("band_mhz", "10-100"),
         ("fidelity", "standard"),
+        ("dimension", "3d"),
         ("run_env", "server"),
     ):
         wizard.answer(session, field, value)
@@ -141,6 +142,7 @@ def test_dump_without_numeric_inputs_marks_unknown(tmp_path: Path):
         ("needs_sfcw", "false"),
         ("band_mhz", "20-200"),
         ("fidelity", "quick"),
+        ("dimension", "2d"),
         ("run_env", "local"),
     ):
         wizard.answer(session, field, value)
@@ -199,3 +201,33 @@ def test_unknown_field_raises(tmp_path: Path):
     session = wizard.create_session(tmp_path / "s")
     with pytest.raises(wizard.WizardError):
         wizard.answer(session, "no_such_field", "x")
+
+
+def test_dimension_required_for_dump(tmp_path: Path):
+    session = wizard.create_session(tmp_path / "s")
+    for field, value in (
+        ("scenario_type", "other"),
+        ("target_depth_m", "20"),
+        ("target_material", "unknown"),
+        ("medium_material", "unknown"),
+        ("needs_sfcw", "false"),
+        ("band_mhz", "20-200"),
+        ("fidelity", "quick"),
+        ("run_env", "local"),
+    ):
+        wizard.answer(session, field, value)
+    # dimension is required: dump without it must block
+    with pytest.raises(wizard.WizardError):
+        wizard.dump(session)
+
+
+def test_dimension_invalid_choice_rejected(tmp_path: Path):
+    session = wizard.create_session(tmp_path / "s")
+    with pytest.raises(wizard.WizardError):
+        wizard.answer(session, "dimension", "4d")
+
+
+def test_dump_contract_carries_model_dimension(tmp_path: Path):
+    session = _complete_session(tmp_path)
+    contract = wizard.dump(session)["contract_draft"]
+    assert contract["model"]["dimension"] == "3d"

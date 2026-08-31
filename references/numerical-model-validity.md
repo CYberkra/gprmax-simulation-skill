@@ -15,6 +15,13 @@ Choose domain extents and PML clearance so that boundary interactions cannot
 reach the receiver in the analysed time window. Record the time window, rather
 than assuming a plot range proves the model was long enough.
 
+Declare the model dimension (2d / 2.5d / 3d) and keep conclusions within that
+representation level: a 2D single-cell slice is TM mode, a 2.5D thin slice
+(3–5 cells in the invariant direction) retains 3D physics at lower cost, and a
+full 3D model is required for formal/engineering claims. A reduced-dimensional
+result never certifies a three-dimensional objective (see `audit_geometry` and
+the fidelity ladder F2/F3/F4).
+
 ## Source, receiver, and representation level
 
 Record source type, position, orientation/polarization, waveform, receiver

@@ -65,6 +65,12 @@ enter the run queue. Prefer the study's runner for execution; record per-case
 logs, support resume on existing outputs, and produce a status table with a
 live progress view.
 
+**Do not batch before the model is established.** A new project must first
+complete the guided setup (contract with a declared dimension, resolved
+medium/target materials, and a frequency band) and run at least one single-case
+verification that produces auditable ``.out`` evidence. Run ``dataset check-model``
+to inspect readiness; ``dataset sample --force`` skips the gate explicitly.
+
 ## Process results for inspection
 
 gprMax raw outputs usually need processing to be visibly informative as A-scan /

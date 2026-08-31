@@ -15,6 +15,17 @@
       "type": "object",
       "additionalProperties": true
     },
+    "model": {
+      "type": "object",
+      "required": ["dimension"],
+      "properties": {
+        "dimension": {
+          "type": "string",
+          "enum": ["2d", "2.5d", "3d"]
+        }
+      },
+      "additionalProperties": true
+    },
     "task": {
       "type": "object",
       "required": ["objective", "claim_scope"],

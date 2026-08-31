@@ -169,9 +169,10 @@ def audit_model_purpose(ctx: GateContext) -> GateResult:
 def _dimension(contract: Mapping[str, Any]) -> str:
     model = _mapping(contract.get("model"), "model")
     dimension = _required_text(model, "dimension", "model").lower()
-    if dimension not in {"2d", "3d"}:
+    if dimension not in {"2d", "2.5d", "3d"}:
         raise _GeometryAuditError(
-            "BLOCK_GEOMETRY_DIMENSION", "model.dimension must be '2d' or '3d'"
+            "BLOCK_GEOMETRY_DIMENSION",
+            "model.dimension must be '2d', '2.5d' or '3d'",
         )
     return dimension
 

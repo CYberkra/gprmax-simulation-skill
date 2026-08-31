@@ -115,6 +115,18 @@ AXES: tuple[Axis, ...] = (
         dependents=("resources",),
         marker="fp32 数值地板与所需动态范围由匹配的精度试验和具体硬件决定，不留常数",
     ),
+    Axis(
+        id="dimension",
+        label="模型维度",
+        question="模型维度（2D/2.5D/3D）？",
+        options=(
+            Option("2d", "二维切片（单 cell）", "最低成本，趋势/快速筛选；gprMax 单 cell 切片，TM 模式"),
+            Option("2.5d", "薄片 3D（不变方向 3–5 cells）", "折中：保留 3D 物理、成本可控，参数扫描/中间验证"),
+            Option("3d", "全三维", "正式结论/判据/发表级，最高成本"),
+        ),
+        dependents=("mesh", "geometry"),
+        marker="2d → gprMax 单 cell 切片，源极化必须与不变方向一致（TM 模式）；2.5d → 薄片方向边缘效应需论证",
+    ),
 )
 
 
@@ -136,9 +148,24 @@ def axis_by_id(axis_id: str) -> Axis:
 
 
 def _fidelity_option(axis_id: str, fidelity: str) -> str:
-    quick = {"antenna": "ideal_hertzian", "geometry": "L1", "noise": "none"}
-    standard = {"antenna": "ideal_hertzian", "geometry": "L3", "noise": "none"}
-    publication = {"antenna": "physical", "geometry": "L4", "noise": "awgn"}
+    quick = {
+        "antenna": "ideal_hertzian",
+        "geometry": "L1",
+        "noise": "none",
+        "dimension": "2d",
+    }
+    standard = {
+        "antenna": "ideal_hertzian",
+        "geometry": "L3",
+        "noise": "none",
+        "dimension": "2.5d",
+    }
+    publication = {
+        "antenna": "physical",
+        "geometry": "L4",
+        "noise": "awgn",
+        "dimension": "3d",
+    }
     table = {"quick": quick, "standard": standard, "publication": publication}
     return table.get(fidelity, standard).get(axis_id, "")
 
@@ -194,6 +221,22 @@ def recommend(
             ):
                 option = "L3"
                 rationale = "深部/判分辨场景建议非规则轮廓以规避平整界面相干伪影"
+            if axis.id == "dimension":
+                upgrade = {
+                    "2d": "2.5d",
+                    "2.5d": "3d",
+                    "3d": "3d",
+                }
+                if (scenario in ("landslide", "tunnel") or needs_sfcw) and option != "3d":
+                    upgraded = upgrade[option]
+                    if upgraded != option:
+                        reason = (
+                            "正式判据场景提升到 3d（结论需要全三维物理）"
+                            if upgraded == "3d"
+                            else "深部场景先提一级到 2.5d（薄片 3D 保留 3D 物理）"
+                        )
+                        rationale = f"{fidelity} 档默认 {option}；{reason}"
+                        option = upgraded
         recommended[axis.id] = {"option": option, "rationale": rationale}
     return recommended
 
@@ -223,4 +266,6 @@ def _marker_applies(axis_id: str, option: str) -> bool:
         return option in ("L2", "L3", "L4")
     if axis_id == "precision":
         return option == "fp64"
+    if axis_id == "dimension":
+        return option in ("2d", "2.5d")
     return False

@@ -102,3 +102,36 @@ def test_markers_empty_for_all_defaults():
 def test_dependencies_of():
     assert "mesh" in axes.dependencies_of("sfcw")
     assert "numerics" in axes.dependencies_of("dispersion")
+
+
+def test_dimension_axis_options():
+    ids = {option.id for option in axes.axis_by_id("dimension").options}
+    assert ids == {"2d", "2.5d", "3d"}
+
+
+def test_dimension_fidelity_mapping():
+    assert axes.recommend("other", "quick")["dimension"]["option"] == "2d"
+    assert axes.recommend("other", "publication")["dimension"]["option"] == "3d"
+
+
+def test_dimension_deep_scenario_upgrades():
+    # quick + tunnel: 2d -> 2.5d (one tier up); standard + tunnel: 2.5d -> 3d
+    rec = axes.recommend("tunnel", "quick")
+    assert rec["dimension"]["option"] == "2.5d"
+    rec = axes.recommend("tunnel", "standard")
+    assert rec["dimension"]["option"] == "3d"
+    # non-deep scenario stays at the fidelity default
+    assert axes.recommend("archaeology", "standard")["dimension"]["option"] == "2.5d"
+
+
+def test_dimension_explicit_wins():
+    rec = axes.recommend("tunnel", "publication", explicit={"dimension": "2d"})
+    assert rec["dimension"]["option"] == "2d"
+
+
+def test_dimension_markers():
+    markers = axes.markers_for({"dimension": "2d"})
+    assert any("极化" in marker for marker in markers)
+    markers = axes.markers_for({"dimension": "2.5d"})
+    assert any("薄片" in marker for marker in markers)
+    assert axes.markers_for({"dimension": "3d"}) == []

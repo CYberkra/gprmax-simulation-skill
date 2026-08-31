@@ -472,6 +472,13 @@ def _parser() -> argparse.ArgumentParser:
     dsample.add_argument("--count", type=int, default=None, help="override count")
     dsample.add_argument("--strategy", choices=("random", "grid"), default=None)
     dsample.add_argument("--seed", type=int, default=None)
+    dsample.add_argument(
+        "--force",
+        action="store_true",
+        help="skip the model-establishment gate (single-model not yet verified)",
+    )
+    dcheck = dsub.add_parser("check-model")
+    dcheck.add_argument("--study", type=Path, default=Path("study"))
     dstatus = dsub.add_parser("status")
     dstatus.add_argument("--study", type=Path, default=Path("study"))
     dsummary = dsub.add_parser("summary")
@@ -698,6 +705,7 @@ def _dataset_sample(args: argparse.Namespace) -> int:
     from dataclasses import replace
 
     try:
+        batch.require_model_established(args.study, force=args.force)
         space = sampling.load_space(args.space)
         if args.count is not None:
             space = replace(space, count=args.count)
@@ -713,6 +721,17 @@ def _dataset_sample(args: argparse.Namespace) -> int:
     print(sampling.render_space(space))
     print(f"sampled {len(cases)} cases -> {cases_path}")
     return 0
+
+
+def _dataset_check_model(args: argparse.Namespace) -> int:
+    gaps = batch.model_establishment_gaps(args.study)
+    if not gaps:
+        print("model established — batch simulation may proceed")
+        return 0
+    print("model NOT established; fix before batch simulation:")
+    for gap in gaps:
+        print(f"- {gap}")
+    return 2
 
 
 def _dataset_status(args: argparse.Namespace) -> int:
@@ -927,6 +946,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "dataset":
         if args.dataset_command == "sample":
             return _dataset_sample(args)
+        if args.dataset_command == "check-model":
+            return _dataset_check_model(args)
         if args.dataset_command == "status":
             return _dataset_status(args)
         if args.dataset_command == "summary":

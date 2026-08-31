@@ -41,6 +41,88 @@ class BatchError(ValueError):
     """Invalid batch state or orchestration call."""
 
 
+def model_establishment_gaps(study_root: Path) -> list[str]:
+    """Return unmet model-establishment requirements before batch simulation.
+
+    A new project must first establish a single validated model — contract
+    confirmed, dimension declared, materials/band resolved, and at least one
+    real run output audited — before any batch expansion. Each returned string
+    is a human-readable requirement that is not yet met; an empty list means
+    the model is established and batch simulation may proceed.
+
+    Checks (all required):
+    1. ``simulation_contract.yaml`` exists and parses (YAML mapping);
+    2. the contract declares ``model.dimension`` (2d / 2.5d / 3d);
+    3. the contract declares medium/target material names (no ``unknown``);
+    4. the contract declares a waveform band (``waveform.band_mhz``);
+    5. ``outputs/`` holds at least one ``.out`` file (single-model smoke has
+       produced auditable raw evidence).
+    """
+    import yaml
+
+    study_root = Path(study_root)
+    gaps: list[str] = []
+
+    contract_path = study_root / "simulation_contract.yaml"
+    if not contract_path.is_file():
+        gaps.append("simulation_contract.yaml missing — run the guided setup first")
+        return gaps
+    try:
+        contract = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        gaps.append("simulation_contract.yaml is unreadable — re-dump from the wizard")
+        return gaps
+    if not isinstance(contract, dict):
+        gaps.append("simulation_contract.yaml must be a mapping")
+        return gaps
+
+    model = contract.get("model") or {}
+    dimension = model.get("dimension") if isinstance(model, Mapping) else None
+    if dimension not in {"2d", "2.5d", "3d"}:
+        gaps.append(
+            "model.dimension not declared (need 2d/2.5d/3d) — confirm it in the wizard"
+        )
+
+    medium = contract.get("medium") or {}
+    if isinstance(medium, Mapping):
+        for field, label in (("medium_material", "围岩介质"), ("target_material", "目标材料")):
+            value = medium.get(field)
+            if value is None or str(value).strip().lower() in {"", "unknown", "待调研"}:
+                gaps.append(f"medium.{field} ({label}) unresolved — research and confirm")
+    else:
+        gaps.append("medium block missing in contract")
+
+    waveform = contract.get("waveform") or {}
+    band = waveform.get("band_mhz") if isinstance(waveform, Mapping) else None
+    if band is None:
+        gaps.append("waveform.band_mhz not declared — confirm frequency band")
+
+    outputs = outputs_dir(study_root)
+    out_files = sorted(outputs.glob("*.out")) if outputs.is_dir() else []
+    if not out_files:
+        gaps.append(
+            "no .out in outputs/ — run and audit at least one single-model case first"
+        )
+
+    return gaps
+
+
+def require_model_established(study_root: Path, *, force: bool = False) -> list[str]:
+    """Fail-closed gate for batch entry.
+
+    Raises ``BatchError`` listing every unmet model-establishment requirement
+    unless ``force=True`` (explicit user override, matching the skill's
+    "user-specified wins" rule). Returns the gap list when empty.
+    """
+    gaps = model_establishment_gaps(study_root)
+    if gaps and not force:
+        raise BatchError(
+            "model not established; fix before batch simulation:\n- "
+            + "\n- ".join(gaps)
+        )
+    return gaps
+
+
 def batch_dir(study_root: Path) -> Path:
     return Path(study_root) / "batch"
 

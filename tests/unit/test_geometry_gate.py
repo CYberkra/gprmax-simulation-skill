@@ -399,3 +399,46 @@ def test_model_purpose_publishes_derived_copy_without_overwriting_registry(tmp_p
     assert ctx.artifacts["model_purpose"] == {"source": "input evidence"}
     assert ctx.artifacts["derived"]["model_purpose"] == registry
     assert ctx.artifacts["derived"]["grid"] == {}
+
+
+# --------------------------------------------------------------------------
+# 2.5d dimension support
+# --------------------------------------------------------------------------
+
+def test_2_5d_accepts_three_axes(tmp_path: Path):
+    """2.5d is a thin-slice 3D grid and must declare 3 coordinate axes."""
+    contract = _contract(
+        model={"dimension": "2.5d"},
+        geometry={
+            "coordinate_system": {"axes": ["x", "y", "z"]},
+            "critical_features": [
+                {"id": "target", "size_m": 0.83, "axis": "x", "minimum_cells": 2}
+            ],
+        },
+    )
+    validated = dict(_validated_geometry())
+    validated["coordinate_axes"] = ["x", "y", "z"]
+    result = audit_geometry(
+        GateContext(tmp_path, contract, artifacts={"geometry": validated})
+    )
+    # 2.5d should pass for a numerical detection claim (not blocked by 2d overclaim)
+    assert result.state is GateState.PASS
+
+
+def test_2_5d_not_blocked_by_engineering_objective(tmp_path: Path):
+    """2.5d is a 3D grid and should not be blocked by the 2d overclaim logic."""
+    contract = {
+        "task": {"objective": "detection", "claim_scope": "engineering"},
+        "model": {"dimension": "2.5d"},
+    }
+    result = audit_geometry(GateContext(tmp_path, contract))
+    # will fail with a different error (missing geometry/coordinates), but not
+    # BLOCK_DIMENSIONALITY_OVERCLAIM — that is reserved for true 2d
+    assert result.code != "BLOCK_DIMENSIONALITY_OVERCLAIM"
+
+
+def test_2d_still_blocks_engineering_claim(tmp_path: Path):
+    """2d overclaim guard must still fire for genuine 2d (regression)."""
+    contract = {"task": {"objective": "detection", "claim_scope": "engineering"}, "model": {"dimension": "2d"}}
+    result = audit_geometry(GateContext(tmp_path, contract))
+    assert result.code == "BLOCK_DIMENSIONALITY_OVERCLAIM"

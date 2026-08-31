@@ -51,6 +51,7 @@ REQUIRED_FIELDS = (
     "needs_sfcw",
     "band_mhz",
     "fidelity",
+    "dimension",
     "run_env",
 )
 # Optional fields that refine numerics but never block a dump.
@@ -111,6 +112,10 @@ STEP_FIELDS: dict[str, dict[str, Any]] = {
         "question": "拟真度取向？",
         "fields": {
             "fidelity": {"label": "拟真度", "choices": axes.FIDELITY_INTENTS},
+            "dimension": {
+                "label": "模型维度",
+                "choices": tuple(item.id for item in axes.axis_by_id("dimension").options),
+            },
             "custom_cells_m": {
                 "label": "自定义网格 dx,dy,dz (m，可选)",
                 "type": "triple",
@@ -420,6 +425,7 @@ def _contract_draft(
         "one_factor" if len(factors) == 1 else "factorial"
     )
     sfcw_enabled = chosen_sfcw(recommendations)
+    dimension = session.answers.get("dimension")
     project = {
         "design_type": design_type,
         "design_subtype": design_subtype,
@@ -431,6 +437,9 @@ def _contract_draft(
         project["target_depth_m"] = float(session.answers["target_depth_m"])
     return {
         "project": project,
+        "model": {
+            "dimension": dimension if dimension in {"2d", "2.5d", "3d"} else "unknown",
+        },
         "task": {
             "objective": session.answers.get("scenario_type", "other"),
             "claim_scope": "numerical",
