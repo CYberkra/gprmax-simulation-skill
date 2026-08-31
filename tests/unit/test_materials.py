@@ -229,3 +229,68 @@ def test_suggest_similar_respects_top_k(tmp_path: Path):
     library = _suggestion_library(tmp_path)
     results = materials.suggest_similar("coal_dry", library, top_k=1)
     assert len(results) == 1
+
+
+def test_validate_entry_rejects_negative_permittivity():
+    with pytest.raises(materials.MaterialError):
+        materials.validate_entry(
+            _valid_entry(
+                properties={"eps_r": -3.0, "sigma_s_m": 1e-4, "model": "none"}
+            )
+        )
+
+
+def test_validate_entry_rejects_negative_conductivity():
+    with pytest.raises(materials.MaterialError):
+        materials.validate_entry(
+            _valid_entry(
+                properties={"eps_r": 4.0, "sigma_s_m": -1e-4, "model": "none"}
+            )
+        )
+
+
+def test_validate_entry_rejects_bool_confidence():
+    with pytest.raises(materials.MaterialError):
+        materials.validate_entry(_valid_entry(confidence=True))
+
+
+def test_suggest_similar_rejects_invalid_top_k(tmp_path: Path):
+    library = _suggestion_library(tmp_path)
+    with pytest.raises(materials.MaterialError):
+        materials.suggest_similar("coal_dry", library, top_k=0)
+    with pytest.raises(materials.MaterialError):
+        materials.suggest_similar("coal_dry", library, top_k=-1)
+
+
+def test_suggest_similar_known_category_ranks_higher(tmp_path: Path):
+    """Regression: an inline query carrying a category must use it for ranking.
+
+    Two candidates with identical eps/sigma/model but different categories:
+    the one matching the query's category should rank first (purely by
+    category bonus).
+    """
+    library = tmp_path / "materials"
+    library.mkdir()
+    for name, cat in (("rock_a", "rock"), ("soil_a", "soil")):
+        (library / f"{name}.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "name": name,
+                    "category": cat,
+                    "properties": {"eps_r": 4.0, "sigma_s_m": 1e-4, "model": "none"},
+                    "source": {"kind": "literature", "ref": "test"},
+                    "confidence": 4,
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+    query = {
+        "name": "query_rock",
+        "category": "rock",
+        "properties": {"eps_r": 4.0, "sigma_s_m": 1e-4, "model": "none"},
+    }
+    results = materials.suggest_similar(query, library, top_k=2)
+    assert len(results) == 2
+    # rock_a must rank first (lower distance) because of category bonus
+    assert results[0]["name"] == "rock_a", f"expected rock_a first, got {results[0]}"

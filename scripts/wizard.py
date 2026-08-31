@@ -232,12 +232,20 @@ def _parse_triple(value: Any) -> tuple[float, float, float]:
 def _validate_answer(field: str, value: Any, spec: Mapping[str, Any]) -> Any:
     kind = spec.get("type")
     if kind == "number":
-        number = float(value)
+        try:
+            number = float(value)
+        except (TypeError, ValueError) as error:
+            raise WizardError(f"{field}: expected a number, got {value!r}") from error
         if not math.isfinite(number) or number < 0:
             raise WizardError(f"{field}: must be a non-negative finite number")
         return number
     if kind == "int":
-        integer = int(value)
+        if isinstance(value, float) and not value.is_integer():
+            raise WizardError(f"{field}: expected an integer, got {value!r}")
+        try:
+            integer = int(value)
+        except (TypeError, ValueError) as error:
+            raise WizardError(f"{field}: expected an integer, got {value!r}") from error
         if integer <= 0:
             raise WizardError(f"{field}: must be a positive integer")
         return integer
@@ -282,7 +290,7 @@ def answer(session: Session, field: str, value: Any) -> Any:
 
 
 def back(session: Session, steps: int = 1) -> list[str]:
-    """Remove the last *steps* answers (by answer time), supporting corrections."""
+    """Remove the most recent *steps* answers (in insertion order), supporting corrections."""
     ordered = list(session.answers)
     if not ordered:
         raise WizardError("nothing to step back from")
@@ -331,6 +339,8 @@ def validate_for_dump(session: Session) -> list[str]:
             session.answers[field] = validated
         except WizardError as error:
             problems.append(str(error))
+    if not problems:
+        save_session(session)
     return problems
 
 

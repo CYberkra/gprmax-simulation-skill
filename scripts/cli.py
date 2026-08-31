@@ -4,7 +4,6 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-import shutil
 import sys
 from typing import Any
 
@@ -121,6 +120,9 @@ def _material_add(path: Path, materials_dir: Path, override: bool) -> int:
         target_dir = materials_dir / entry["category"]
         target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / f"{Path(path).stem}.yaml"
+    if target.exists():
+        print(f"material {entry['name']} already exists at {target.relative_to(materials_dir.parent)}", file=sys.stderr)
+        return 2
     target.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
     print(f"added {entry['name']} -> {target.relative_to(materials_dir.parent)}")
     return 0
@@ -513,7 +515,7 @@ def _parser() -> argparse.ArgumentParser:
     ssub = scmd.add_subparsers(dest="sfcw_command", required=True)
     sprocess = ssub.add_parser("process")
     sprocess.add_argument("out_file", type=Path)
-    sprocess.add_argument("--mode", choices=("impulse_lti", "broadband_deconvolution"), default="impulse_lti")
+    sprocess.add_argument("--mode", choices=("impulse_lti", "broadband_deconvolution"), default=None)
     sprocess.add_argument("--band", required=True, help="tone band as <lo>-<hi> in MHz, e.g. 30-240")
     sprocess.add_argument("--df-mhz", type=float, default=1.0)
     sprocess.add_argument("--dt-s", type=float, default=None)
@@ -593,8 +595,8 @@ DEFAULT_SCENARIOS = Path("templates") / "scenarios"
 
 
 def _wizard_answer(session_path: Path, field: str, value: str) -> int:
-    session = wizard.load_session(session_path)
     try:
+        session = wizard.load_session(session_path)
         validated = wizard.answer(session, field, value)
     except wizard.WizardError as error:
         print(f"BLOCK {error}", file=sys.stderr)
@@ -604,10 +606,13 @@ def _wizard_answer(session_path: Path, field: str, value: str) -> int:
 
 
 def _wizard_status(session_path: Path) -> int:
-    session = wizard.load_session(session_path)
-    import json as _json
-
-    print(_json.dumps(wizard.status(session), indent=2, ensure_ascii=False))
+    try:
+        session = wizard.load_session(session_path)
+        payload = wizard.status(session)
+    except wizard.WizardError as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
     return 0
 
 
@@ -617,8 +622,8 @@ def _wizard_dump(
     sketch_path: Path | None,
     report_path: Path | None,
 ) -> int:
-    session = wizard.load_session(session_path)
     try:
+        session = wizard.load_session(session_path)
         payload = wizard.dump(session)
     except wizard.WizardError as error:
         print(f"BLOCK {error}", file=sys.stderr)
@@ -626,12 +631,12 @@ def _wizard_dump(
     if out is not None:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(
-            __import__("yaml").safe_dump(payload, sort_keys=False, allow_unicode=True),
+            yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
             encoding="utf-8",
         )
         print(f"dump written -> {out}")
     else:
-        print(__import__("yaml").safe_dump(payload, sort_keys=False, allow_unicode=True), end="")
+        print(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), end="")
     contract = payload.get("contract_draft", {})
     if sketch_path is not None:
         try:
@@ -778,24 +783,36 @@ def _sfcw_process(args: argparse.Namespace) -> int:
             else None
         )
 
+        # Resolve the processing chain: an explicit --chain contributes its
+        # default mode/parameters; an explicit --mode always wins.
+        chain_spec = None
+        if args.chain != "auto":
+            chain_spec = visualize.recommend_chain({"chain": args.chain}, {})
+            print(
+                f"chain        -> {chain_spec['chain']} (mode={chain_spec['mode']}, "
+                f"display_only={chain_spec['display_only']}) — {chain_spec['rationale']}"
+            )
+        mode = args.mode
+        if mode is None and chain_spec is not None:
+            mode = chain_spec.get("mode") or "impulse_lti"
+        if mode is None:
+            mode = "impulse_lti"
+        chain_params = (chain_spec or {}).get("parameters", {}) or {}
+        zero_pad = int(chain_params.get("zero_pad_factor", args.zero_pad))
+        regularisation = float(chain_params.get("regularisation", args.regularisation))
+
         artifacts = visualize.process_and_plot(
             args.out_file,
-            mode=args.mode,
+            mode=mode,
             frequencies_mhz=frequencies_mhz,
             dt_s=args.dt_s,
             output_dir=args.output_dir,
             impulse_response=impulse_response,
             source_waveform=source_waveform,
             band_mhz=band,
-            zero_pad_factor=args.zero_pad,
-            regularisation=args.regularisation,
+            zero_pad_factor=zero_pad,
+            regularisation=regularisation,
         )
-        if args.chain != "auto":
-            chain = visualize.recommend_chain({"chain": args.chain}, {})
-            print(
-                f"chain        -> {chain['chain']} (mode={chain['mode']}, "
-                f"display_only={chain['display_only']}) — {chain['rationale']}"
-            )
     except (visualize.ProcessingError, ValueError, OSError) as error:
         print(f"BLOCK {error}", file=sys.stderr)
         return 2
@@ -843,9 +860,7 @@ def _dataset_status(args: argparse.Namespace) -> int:
     except (batch.BatchError, OSError) as error:
         print(f"BLOCK {error}", file=sys.stderr)
         return 2
-    import json as _json
-
-    print(_json.dumps(dashboard, indent=2, ensure_ascii=False))
+    print(json.dumps(dashboard, indent=2, ensure_ascii=False))
     return 0
 
 
@@ -964,16 +979,14 @@ def _layout_hash(study_dir: Path) -> int:
 
 
 def _load_optional_json(path: Path | None) -> list | dict | None:
+    """Load an optional JSON artifact; on any failure warn and return None."""
     if path is None:
         return None
-    import json as _json
-
     try:
-        value = _json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, _json.JSONDecodeError) as error:
-        print(f"BLOCK {path} is unreadable JSON ({error})", file=sys.stderr)
-        raise
-    return value
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        print(f"WARN optional artifact {path} unreadable ({error}); ignored", file=sys.stderr)
+        return None
 
 
 def _report_model_card(args: argparse.Namespace) -> int:
@@ -982,19 +995,27 @@ def _report_model_card(args: argparse.Namespace) -> int:
         diagnostics = _load_optional_json(args.diagnostics)
         sensitivity = _load_optional_json(args.sensitivity)
         probe = _load_optional_json(args.probe)
+        if diagnostics is not None and not isinstance(diagnostics, list):
+            print(f"WARN diagnostics artifact is not a list; ignored", file=sys.stderr)
+            diagnostics = None
+        if sensitivity is not None and not isinstance(sensitivity, list):
+            print(f"WARN sensitivity artifact is not a list; ignored", file=sys.stderr)
+            sensitivity = None
+        if probe is not None and not isinstance(probe, dict):
+            print(f"WARN probe artifact is not a mapping; ignored", file=sys.stderr)
+            probe = None
         chain = None
         if args.chain:
             chain = visualize.recommend_chain({"chain": args.chain}, contract)
         text = report.render_model_card(
             contract,
-            diagnostics=diagnostics if isinstance(diagnostics, list) else None,
-            sensitivity=sensitivity if isinstance(sensitivity, list) else None,
+            diagnostics=diagnostics,
+            sensitivity=sensitivity,
             chain=chain,
-            probe=probe if isinstance(probe, dict) else None,
+            probe=probe,
         )
     except (
         ContractError,
-        report.SketchError,
         visualize.ProcessingError,
         ValueError,
         OSError,
@@ -1088,8 +1109,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.wizard_command == "answer":
             return _wizard_answer(args.session, args.field, args.value)
         if args.wizard_command == "back":
-            session = wizard.load_session(args.session)
             try:
+                session = wizard.load_session(args.session)
                 removed = wizard.back(session, args.steps)
             except wizard.WizardError as error:
                 print(f"BLOCK {error}", file=sys.stderr)

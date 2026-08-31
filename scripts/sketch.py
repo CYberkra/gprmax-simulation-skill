@@ -12,7 +12,8 @@ restrained palette, faded gridlines, clear markers, and dimension callouts.
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from pathlib import Path
+from typing import Any, Mapping
 
 import numpy as np
 
@@ -60,52 +61,77 @@ def _positive(value: Any, name: str) -> float:
 
 
 def _domain_xy(contract: Mapping[str, Any]) -> tuple[float, float]:
-    """Return (x_extent, z_extent) in metres from the contract."""
+    """Return (x_extent, z_extent) in metres from the contract.
+
+    ``domain_m`` may be a 3-tuple (x, y, z); if present but malformed it is
+    a hard error (fail-closed) rather than a silent fallback.
+    """
     project = contract.get("project") or {}
     target_depth = project.get("target_depth_m")
     if target_depth is None:
         raise SketchError("project.target_depth_m is required for the sketch")
     depth = _positive(target_depth, "project.target_depth_m")
     domain = contract.get("domain_m")
-    if isinstance(domain, (list, tuple)) and len(domain) == 3:
-        x = _positive(domain[0], "domain_m[0]")
-        z = _positive(domain[2], "domain_m[2]")
-        if z < depth:
-            raise SketchError(
-                f"domain z-extent ({z} m) is smaller than target depth ({depth} m)"
-            )
-        return x, z
-    # No domain declared: draw a sketch window sized to the target depth.
-    return depth * 1.5, depth * 1.5
+    if domain is None:
+        # No domain declared: draw a sketch window sized to the target depth.
+        return depth * 1.5, depth * 1.5
+    if not isinstance(domain, (list, tuple)) or len(domain) != 3:
+        raise SketchError(
+            f"domain_m must be [x, y, z] with three entries, got {domain!r}"
+        )
+    x = _positive(domain[0], "domain_m[0]")
+    z = _positive(domain[2], "domain_m[2]")
+    if z < depth:
+        raise SketchError(
+            f"domain z-extent ({z} m) is smaller than target depth ({depth} m)"
+        )
+    return x, z
 
 
-def _target_box(contract: Mapping[str, Any], depth: float) -> tuple[float, float, float, float]:
-    """Return a nominal target box (x, z, w, h) centred on the declared depth."""
+def _target_box(
+    contract: Mapping[str, Any], depth: float, x_extent: float, z_extent: float
+) -> tuple[float, float, float, float]:
+    """Return a nominal target box (x, z, w, h) centred horizontally.
+
+    The box is centred on the declared depth and must fit inside the sketch
+    window; an out-of-window target is a fail-closed error (the sketch would
+    otherwise be misleading).
+    """
     project = contract.get("project") or {}
     size = project.get("target_size_m")
     if isinstance(size, (int, float)) and size > 0:
         side = float(size)
     else:
         side = max(depth * 0.05, 0.5)  # nominal 5% of depth, display-only
-    x = 0.5  # centred horizontally in the sketch window
-    return (x - side / 2, depth - side / 2, side, side)
+    x = x_extent / 2  # centred horizontally in the sketch window
+    box_x = x - side / 2
+    box_z = depth - side / 2
+    if box_x < 0 or box_x + side > x_extent:
+        raise SketchError(
+            f"target box (side {side:.2f} m) does not fit the sketch window "
+            f"x∈[0, {x_extent:.2f}] m — reduce target_size_m"
+        )
+    if box_z < 0 or box_z + side > z_extent:
+        raise SketchError(
+            f"target box (side {side:.2f} m) does not fit the sketch window "
+            f"z∈[0, {z_extent:.2f}] m at depth {depth:.2f} m — reduce target_size_m"
+        )
+    return box_x, box_z, side, side
 
 
 def plot_geometry_sketch(
     contract: Mapping[str, Any],
-    out_path: Any,
+    out_path: Path | str,
     *,
     title: str | None = None,
     dpi: int = 150,
-) -> Any:
+) -> Path:
     """Render a side-view geometry sketch and save it to *out_path*.
 
     ``contract`` needs at least ``project.target_depth_m``; an optional
     ``domain_m`` (x, y, z) and ``project.target_size_m`` refine the sketch.
     Returns the output path.
     """
-    from pathlib import Path
-
     out_path = Path(out_path)
     if not isinstance(contract, Mapping):
         raise SketchError("contract must be a mapping")
@@ -113,7 +139,7 @@ def plot_geometry_sketch(
     project = contract.get("project") or {}
     depth = _positive(project.get("target_depth_m"), "project.target_depth_m")
     x_extent, z_extent = _domain_xy(contract)
-    box_x, box_z, box_w, box_h = _target_box(contract, depth)
+    box_x, box_z, box_w, box_h = _target_box(contract, depth, x_extent, z_extent)
 
     fig, ax = plt.subplots(figsize=(9, 5), facecolor=_FACE_BG)
     ax.set_facecolor(_FACE_BG)

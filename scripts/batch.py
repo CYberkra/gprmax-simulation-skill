@@ -94,11 +94,11 @@ def model_establishment_gaps(study_root: Path) -> list[str]:
 
     waveform = contract.get("waveform") or {}
     band = waveform.get("band_mhz") if isinstance(waveform, Mapping) else None
-    if band is None:
+    if band is None or str(band).strip() in {"", "0", "unknown"}:
         gaps.append("waveform.band_mhz not declared — confirm frequency band")
 
     outputs = outputs_dir(study_root)
-    out_files = sorted(outputs.glob("*.out")) if outputs.is_dir() else []
+    out_files = sorted(outputs.rglob("*.out")) if outputs.is_dir() else []
     if not out_files:
         gaps.append(
             "no .out in outputs/ — run and audit at least one single-model case first"
@@ -230,7 +230,7 @@ def mark(study_root: Path, case_id: str, status: str, **extra: Any) -> None:
         )
     entry = dict(state[case_id])
     entry["status"] = status
-    entry.update(extra)
+    entry.update({key: value for key, value in extra.items() if key != "status"})
     state[case_id] = entry
     save_state(study_root, state)
 
@@ -263,13 +263,13 @@ def status_dashboard(study_root: Path) -> dict[str, Any]:
     counts = {status: 0 for status in VALID_STATUSES}
     for entry in state.values():
         status = entry.get("status", "pending")
-        counts[status] = counts.get(status, 0) + 1
+        counts[status] += 1
     return {
         "total": len(state),
-        "done": counts.get("done", 0),
-        "pending": counts.get("pending", 0),
-        "running": counts.get("running", 0),
-        "failed": counts.get("fail", 0),
+        "done": counts["done"],
+        "pending": counts["pending"],
+        "running": counts["running"],
+        "failed": counts["fail"],
         "resume_count": len(pending_cases(study_root)),
     }
 

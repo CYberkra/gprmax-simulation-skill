@@ -82,12 +82,25 @@ def validate_entry(value: Mapping[str, Any], path: str = "<entry>") -> dict[str,
         raise MaterialError(f"{path}: source.ref must be non-empty text")
 
     confidence = entry.get("confidence", 3)
-    if not isinstance(confidence, int) or not 1 <= confidence <= 5:
+    if not isinstance(confidence, int) or isinstance(confidence, bool) or not 1 <= confidence <= 5:
         raise MaterialError(f"{path}: 'confidence' must be an integer 1-5")
 
     model = properties.get("model", "none")
     if model not in {"none", "debye", "lorentz", "drude", "measured_complex"}:
         raise MaterialError(f"{path}: properties.model={model!r} is not supported")
+
+    # Physical positivity: relative permittivity and conductivity are >= 0.
+    for field, label in (
+        ("eps_r", "relative permittivity"),
+        ("eps_inf", "infinite-frequency permittivity"),
+        ("eps_s", "static permittivity"),
+        ("sigma_s_m", "static conductivity"),
+    ):
+        value = properties.get(field)
+        if value is not None and (not isinstance(value, (int, float)) or value < 0):
+            raise MaterialError(
+                f"{path}: properties.{field} ({label}) must be a non-negative number"
+            )
 
     entry["properties"] = dict(properties)
     entry["source"] = dict(source)
@@ -157,8 +170,8 @@ def resolve_entry(
     """Resolve an entry by name, preferring the override directory."""
     candidates: list[Path] = []
     if override_dir is not None:
-        candidates.extend(Path(override_dir).rglob("*.yaml"))
-    candidates.extend(Path(materials_dir).rglob("*.yaml"))
+        candidates.extend(sorted(Path(override_dir).rglob("*.yaml")))
+    candidates.extend(sorted(Path(materials_dir).rglob("*.yaml")))
     for path in candidates:
         try:
             entry = load_material(path)
@@ -227,6 +240,8 @@ def suggest_similar(
     Results are deterministic (tie-break by name).
     """
     materials_dir = Path(materials_dir)
+    if not isinstance(top_k, int) or top_k < 1:
+        raise MaterialError(f"top_k must be a positive integer, got {top_k!r}")
     query_name: str | None = None
     if isinstance(query, str):
         query_name = query
@@ -236,7 +251,7 @@ def suggest_similar(
         query_entry = load_material(path)
         query_props = query_entry.get("properties", {})
     elif isinstance(query, Mapping):
-        query_entry = None
+        query_entry = query
         query_props = dict(query.get("properties", query))
     else:
         raise MaterialError("query must be a material name or a properties mapping")
@@ -267,10 +282,13 @@ def suggest_similar(
         c_model = props.get("model", "none")
 
         eps_dist = 0.0
-        if q_eps is not None and c_eps is not None and c_eps > 0:
-            eps_dist = abs(q_eps - c_eps) / max(q_eps, 1e-9)
-        elif q_eps is not None and c_eps is None:
-            eps_dist = 1.0  # incomparable permittivity is a strong mismatch
+        if q_eps is not None:
+            if c_eps is None or c_eps <= 0:
+                eps_dist = 1.0  # candidate has no comparable permittivity
+            else:
+                eps_dist = abs(q_eps - c_eps) / max(q_eps, 1e-9)
+        else:
+            eps_dist = 1.0  # query has no scalar permittivity -> incomparable
 
         # Conductivity spans decades -> compare on log10 scale.
         if q_sigma > 0 and c_sigma > 0:
@@ -281,7 +299,12 @@ def suggest_similar(
             sigma_dist = 2.0  # zero vs non-zero conductivity
 
         model_bonus = 1.0 if c_model == q_model else 0.0
-        category_bonus = 1.0 if entry.get("category") == (query_entry or {}).get("category") else 0.0
+        category_bonus = (
+            1.0
+            if (query_entry or {}).get("category")
+            and entry.get("category") == query_entry.get("category")
+            else 0.0
+        )
 
         # Lower distance is better; higher bonuses are better.
         distance = 0.6 * eps_dist + 0.4 * sigma_dist - 0.15 * model_bonus - 0.1 * category_bonus

@@ -55,6 +55,8 @@ def render_diagnostics_section(
     lines: list[str] = []
     markers = {"BLOCK": "⛔", "WARN": "⚠️", "OK": "✅"}
     for finding in diagnostics:
+        if not isinstance(finding, Mapping):
+            continue
         severity = str(finding.get("severity", "?")).upper()
         marker = markers.get(severity, "·")
         lines.append(
@@ -71,8 +73,11 @@ def render_sensitivity_section(
         return ["_未运行敏感性分析。_"]
     lines = ["| 参数 | 检查 | 相对变化 |", "|---|---|---|"]
     for item in results[:top]:
+        if not isinstance(item, Mapping):
+            continue
         relative = item.get("relative_change")
-        pct = f"{float(relative):.2%}" if isinstance(relative, (int, float)) else "—"
+        numeric = isinstance(relative, (int, float)) and not isinstance(relative, bool)
+        pct = f"{float(relative):.2%}" if numeric else "—"
         lines.append(
             f"| {_text(item.get('parameter'))} | {_text(item.get('check'))} | {pct} |"
         )
@@ -86,10 +91,11 @@ def render_chain_section(chain: Mapping[str, Any] | None) -> list[str]:
     param_text = ", ".join(
         f"{key}={value}" for key, value in sorted(parameters.items())
     ) or "—"
+    display_only = chain.get("display_only")
     return [
         f"- **链**: {_text(chain.get('chain'))}",
         f"- **模式**: {_text(chain.get('mode'))}",
-        f"- **仅显示**: {'是' if chain.get('display_only') else '否'}",
+        f"- **仅显示**: {'是' if display_only is True else '否'}",
         f"- **参数**: {param_text}",
         f"- **依据**: {_text(chain.get('rationale'))}",
     ]
@@ -100,24 +106,30 @@ def render_environment_section(probe: Mapping[str, Any] | None) -> list[str]:
         return ["_未探测环境。_"]
     lines: list[str] = []
     gpus = probe.get("gpu") or []
-    if gpus:
+    if isinstance(gpus, list) and gpus:
         for gpu in gpus[:2]:
+            if not isinstance(gpu, Mapping):
+                continue
             lines.append(
                 f"- GPU: {_text(gpu.get('name'))} {_text(gpu.get('memory_total'))}"
             )
     else:
         lines.append("- GPU: 未检测到 NVIDIA GPU")
     memory = probe.get("memory_total_gb")
-    lines.append(f"- 系统内存: {memory:.1f} GB" if memory else "- 系统内存: 未知")
+    if isinstance(memory, (int, float)) and not isinstance(memory, bool):
+        lines.append(f"- 系统内存: {memory:.1f} GB")
+    else:
+        lines.append("- 系统内存: 未知")
     disk = probe.get("disk") or {}
-    if disk:
+    if isinstance(disk, Mapping) and disk:
         lines.append(
             f"- 磁盘: 总量 {_text(disk.get('total_gb'))} GB / 剩余 {_text(disk.get('free_gb'))} GB"
         )
     gprmax = probe.get("gprmax")
-    lines.append(
-        f"- gprMax: {_text(gprmax.get('version')) if isinstance(gprmax, Mapping) else '未安装'}"
-    )
+    if isinstance(gprmax, Mapping) and gprmax.get("version"):
+        lines.append(f"- gprMax: {_text(gprmax.get('version'))}")
+    else:
+        lines.append("- gprMax: 未安装")
     return lines
 
 
@@ -138,17 +150,17 @@ def render_model_card(
 
     name = title or _text(project.get("name"), "未命名模型")
     lines: list[str] = [f"# 模型卡 {name}", ""]
-    # Metadata line (taste-skill: H1 → metadata, then sections)
-    meta = " · ".join(
-        filter(
-            None,
-            [
-                f"目标深度 {_text(project.get('target_depth_m'))} m",
-                f"频带 {_text(waveform.get('band_mhz'))} MHz",
-                f"{_text(waveform.get('measurement_mode'))}",
-            ],
-        )
-    )
+    # Metadata line (taste-skill: H1 → metadata, then sections); only include
+    # parts whose source value is actually present.
+    meta_parts: list[str] = []
+    if project.get("target_depth_m") is not None:
+        meta_parts.append(f"目标深度 {_text(project.get('target_depth_m'))} m")
+    if waveform.get("band_mhz"):
+        meta_parts.append(f"频带 {_text(waveform.get('band_mhz'))} MHz")
+    measurement = _text(waveform.get("measurement_mode"))
+    if measurement != "—":
+        meta_parts.append(measurement)
+    meta = " · ".join(meta_parts)
     lines.append(f"> {meta}")
     lines.append("")
 
@@ -161,7 +173,7 @@ def render_model_card(
     design_type = project.get("design_type")
     design_subtype = project.get("design_subtype")
     if design_type:
-        lines.append(f"- **试验设计**: {design_type}（{design_subtype}）")
+        lines.append(f"- **试验设计**: {design_type}（{_text(design_subtype)}）")
     factors = project.get("factors")
     if isinstance(factors, list) and factors:
         lines.append(f"- **扫描因素**: {', '.join(map(str, factors))}")

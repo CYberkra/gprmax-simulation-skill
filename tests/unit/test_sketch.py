@@ -63,6 +63,43 @@ def test_plot_geometry_sketch_rejects_nonpositive_depth(tmp_path):
         )
 
 
+def test_plot_geometry_sketch_rejects_malformed_domain(tmp_path):
+    """Regression: domain_m must be a 3-tuple; malformed entries must not silently fall back."""
+    with pytest.raises(sketch.SketchError):
+        sketch.plot_geometry_sketch(
+            _contract(domain_m=[120.0, 20.0]), tmp_path / "sketch.png"
+        )
+
+
+def test_plot_geometry_sketch_rejects_target_out_of_bounds(tmp_path):
+    """Regression: a target larger than the sketch window must raise."""
+    with pytest.raises(sketch.SketchError):
+        sketch.plot_geometry_sketch(
+            _contract(
+                project={"target_depth_m": 80.0, "target_size_m": 200.0},
+                domain_m=[120.0, 20.0, 100.0],
+            ),
+            tmp_path / "sketch.png",
+        )
+
+
+def test_plot_geometry_sketch_target_is_centred(tmp_path):
+    """Regression: the target box must be centred in the sketch window, not at x=0.5."""
+    import numpy as np
+    from PIL import Image
+
+    out = sketch.plot_geometry_sketch(_contract(), tmp_path / "sketch.png")
+    image = np.asarray(Image.open(out).convert("RGB"))
+    # The target accent blue (#0ea5e9) should be roughly in the centre column.
+    blue = (image[:, :, 0] < 80) & (image[:, :, 1] > 120) & (image[:, :, 2] > 160)
+    blue_cols = np.where(blue.any(axis=0))[0]
+    centre = image.shape[1] / 2
+    # The blue box should be within the central third of the image.
+    assert len(blue_cols) > 0, "target box not found"
+    assert blue_cols.min() > centre * 0.33, "target too far left"
+    assert blue_cols.max() < centre * 1.67, "target too far right"
+
+
 def test_plot_geometry_sketch_surface_on_top(tmp_path):
     """Physical convention: Tx/Rx at z=0 sit at the TOP, target depth below.
 

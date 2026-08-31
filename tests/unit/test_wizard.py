@@ -53,6 +53,22 @@ def test_answer_validates_types(tmp_path: Path):
         wizard.answer(session, "needs_sfcw", "maybe")
 
 
+def test_answer_rejects_non_numeric_number(tmp_path: Path):
+    """Regression: float('abc') must surface as WizardError, not a bare ValueError."""
+    session = wizard.create_session(tmp_path / "s")
+    with pytest.raises(wizard.WizardError):
+        wizard.answer(session, "target_depth_m", "abc")
+    with pytest.raises(wizard.WizardError):
+        wizard.answer(session, "medium_eps_r", "not-a-number")
+
+
+def test_answer_rejects_fractional_int(tmp_path: Path):
+    """Regression: pml_layers=3.7 must be rejected, not silently truncated to 3."""
+    session = wizard.create_session(tmp_path / "s")
+    with pytest.raises(wizard.WizardError):
+        wizard.answer(session, "pml_layers", 3.7)
+
+
 def test_answer_validates_band_format(tmp_path: Path):
     session = wizard.create_session(tmp_path / "s")
     with pytest.raises(wizard.WizardError):

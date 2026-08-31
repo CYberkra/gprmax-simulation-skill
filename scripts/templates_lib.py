@@ -43,6 +43,10 @@ class TemplateError(ValueError):
     """Invalid scene template entry or library layout."""
 
 
+# Template names become filenames; keep them filesystem-safe.
+_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_\-]+$")
+
+
 def validate_entry(value: Mapping[str, Any], path: str = "<template>") -> dict[str, Any]:
     """Validate and normalise a scene template entry."""
     if not isinstance(value, Mapping):
@@ -51,12 +55,19 @@ def validate_entry(value: Mapping[str, Any], path: str = "<template>") -> dict[s
     name = value.get("name")
     if not isinstance(name, str) or not name.strip():
         raise TemplateError(f"{path}: 'name' is required and must be non-empty")
+    name = name.strip()
+    if not _NAME_PATTERN.match(name):
+        raise TemplateError(
+            f"{path}: 'name' {name!r} must match {_NAME_PATTERN.pattern} "
+            "(letters, digits, '_', '-') — it becomes a filename"
+        )
     entry = dict(value)
-    entry["name"] = name.strip()
+    entry["name"] = name
 
     scenario = entry.get("scenario")
     if not isinstance(scenario, str) or not scenario.strip():
         raise TemplateError(f"{path}: 'scenario' is required")
+    entry["scenario"] = scenario.strip()
 
     status = entry.get("status", "draft")
     if status not in STATUSES:
@@ -64,18 +75,25 @@ def validate_entry(value: Mapping[str, Any], path: str = "<template>") -> dict[s
     entry["status"] = status
 
     verified_by = entry.get("verified_by", [])
-    if status == "verified":
-        if not isinstance(verified_by, list) or not verified_by:
-            raise TemplateError(
-                f"{path}: a verified template must record verified_by packages"
-            )
-    entry["verified_by"] = list(verified_by)
+    if not isinstance(verified_by, list) or not all(
+        isinstance(item, str) and item.strip() for item in verified_by
+    ):
+        raise TemplateError(
+            f"{path}: 'verified_by' must be a list of non-empty strings"
+        )
+    if status == "verified" and not verified_by:
+        raise TemplateError(
+            f"{path}: a verified template must record verified_by packages"
+        )
+    entry["verified_by"] = [item.strip() for item in verified_by]
 
     match = entry.get("match")
     if not isinstance(match, Mapping) or not isinstance(match.get("scenario_type"), str):
         raise TemplateError(
             f"{path}: 'match.scenario_type' is required (strict-match key)"
         )
+    if not match["scenario_type"].strip():
+        raise TemplateError(f"{path}: 'match.scenario_type' must be non-empty")
     needs_sfcw = match.get("needs_sfcw")
     if not isinstance(needs_sfcw, bool):
         raise TemplateError(f"{path}: 'match.needs_sfcw' must be a boolean")
@@ -181,10 +199,17 @@ def match_scenario(
             depth = signature.get("target_depth_m")
             if depth is None:
                 ok = False  # template constrains depth but study does not say
-            elif depth_range[0] <= float(depth) <= depth_range[1]:
-                specificity += 1
             else:
-                ok = False
+                try:
+                    depth_float = float(depth)
+                except (TypeError, ValueError) as error:
+                    raise TemplateError(
+                        f"signature.target_depth_m must be numeric, got {depth!r}"
+                    ) from error
+                if depth_range[0] <= depth_float <= depth_range[1]:
+                    specificity += 1
+                else:
+                    ok = False
 
         geometry_type = match.get("geometry_type")
         if geometry_type is not None:
@@ -312,7 +337,13 @@ def _template_name_from_study(study_root: Path) -> str:
     if len(candidate) < 4 or candidate in {"study", "test", "tmp"}:
         readme = study_root / "README.md"
         if readme.is_file():
-            for line in readme.read_text(encoding="utf-8").splitlines():
+            try:
+                text = readme.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as error:
+                raise TemplateError(
+                    f"{readme} is unreadable ({error}) — cannot derive a template name"
+                ) from error
+            for line in text.splitlines():
                 heading = line.strip().lstrip("#").strip()
                 if heading:
                     candidate = _STUDY_NAME_RE.sub("_", heading).strip("_").lower()
@@ -331,9 +362,11 @@ def extract_from_study(study_root: Path) -> dict[str, Any]:
     fail-closed because a template with wrong frozen values is worse than
     no template at all.
 
-    The returned entry is a draft (``status: draft``); call
-    :func:`extract_study_auto` to store it, or :func:`verify_template` to
-    promote it later once the validating packages are confirmed.
+    The returned entry is a draft by default; if the manifest records
+    ``verified_by`` / ``packages`` it is returned as ``verified``. Call
+    :func:`extract_study_auto` to store it (forces draft unless told
+    otherwise), or :func:`verify_template` to promote later once the
+    validating packages are confirmed.
     """
     study_root = Path(study_root)
     contract_path = study_root / "simulation_contract.yaml"
@@ -385,6 +418,7 @@ def extract_from_study(study_root: Path) -> dict[str, Any]:
             "scenario_type": signature["scenario_type"],
             "needs_sfcw": signature["needs_sfcw"],
             "depth_range_m": None,
+            "geometry_type": signature.get("geometry_type"),
         },
         "frozen_parameters": frozen,
         "provenance": {

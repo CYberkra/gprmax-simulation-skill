@@ -337,3 +337,52 @@ def test_extract_generic_name_falls_back_to_readme(tmp_path: Path):
     root = _study_dir(tmp_path, name="study")
     entry = tl.extract_from_study(root)
     assert entry["name"]  # derived from README heading or non-empty fallback
+
+
+def test_validate_entry_rejects_path_traversal_name(tmp_path: Path):
+    """Regression: name='../evil' must not produce a file outside scenarios."""
+    with pytest.raises(tl.TemplateError):
+        tl.validate_entry(
+            {
+                "name": "../evil",
+                "scenario": "test",
+                "match": {"scenario_type": "tunnel", "needs_sfcw": True},
+                "frozen_parameters": {"medium": {"model": "debye"}},
+            }
+        )
+
+
+def test_validate_entry_rejects_empty_scenario_type(tmp_path: Path):
+    """Regression: match.scenario_type must be non-empty."""
+    with pytest.raises(tl.TemplateError):
+        tl.validate_entry(
+            {
+                "name": "test",
+                "scenario": "test",
+                "match": {"scenario_type": "", "needs_sfcw": True},
+                "frozen_parameters": {"medium": {"model": "debye"}},
+            }
+        )
+
+
+def test_validate_entry_rejects_string_verified_by(tmp_path: Path):
+    """Regression: verified_by='pkg' must not be silently split into chars."""
+    with pytest.raises(tl.TemplateError):
+        tl.validate_entry(
+            {
+                "name": "test",
+                "scenario": "test",
+                "status": "verified",
+                "verified_by": "pkg",
+                "match": {"scenario_type": "tunnel", "needs_sfcw": True},
+                "frozen_parameters": {"medium": {"model": "debye"}},
+            }
+        )
+
+
+def test_unreadable_readme_raises_template_error(tmp_path: Path):
+    """Regression: a non-UTF-8 README must not produce a bare decode error."""
+    root = _study_dir(tmp_path, name="study")
+    (root / "README.md").write_bytes(b"\xff\xfe")
+    with pytest.raises(tl.TemplateError):
+        tl.extract_from_study(root)
