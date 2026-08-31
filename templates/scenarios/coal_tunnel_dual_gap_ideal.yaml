@@ -1,0 +1,49 @@
+name: coal_tunnel_dual_gap_ideal
+scenario: 煤矿巷道双目标净距分辨（理想传播，0.7/0.9m 净距）
+status: verified
+verified_by:
+  - 20_20260819_D80_IDEALPROP_SINGLETRACE_GAP07_GAP09_GPU (20260819)
+match:
+  scenario_type: tunnel
+  needs_sfcw: true
+  depth_range_m: [50, 100]
+  geometry_type: regular
+frozen_parameters:
+  medium:
+    model: debye
+    debye_eps_inf: 2.811
+    debye_delta_eps: 0.182
+    debye_tau_s: 3.397e-10
+    sigma_s_m: 1.45e-4
+    source: NEWCOAL (Zhang 2020)
+  target:
+    material: WET 含水破碎带
+    eps_r: 5.17
+    sigma_s_m: 0.05
+    geometry_type: regular_box
+    count: 2
+    net_gap_m: [0.7, 0.9]
+    size_m: [0.2, 1.0, 1.0]
+    note: 中心 1 道 T007，双目标 0.7m/0.9m 净距，理想传播
+  antenna:
+    type: ideal_hertzian
+    polarization: z
+    tx_rx_baseline_m: 1.0
+    tx_m: [4.0, 7.5, 3.5]
+    rx_m: [4.0, 8.5, 3.5]
+  grid:
+    dx_m: 0.04
+    dy_m: 0.0625
+    dz_m: 0.0625
+    domain_m: [92.0, 16.0, 7.0]
+    pml_cells: [20, 9, 9, 20, 9, 9]
+    time_step_stability_factor: 0.99
+  waveform:
+    sfcw_mode: impulse_lti
+    excitation: flat_20_290MHz
+    time_window_s: 1.6e-6
+    note: 20-290 MHz 平坦谱，1.6 µs 时窗
+  processing:
+    core_chain: a_chain
+    note: 冻结 A 链；H1-H0 双目标谷深分辨分析
+applicability: 80 m 深部煤巷 SFCW 双目标净距分辨类研究，规则 box 目标，理想赫兹偶极
