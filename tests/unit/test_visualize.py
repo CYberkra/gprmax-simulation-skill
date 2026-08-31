@@ -114,3 +114,67 @@ def test_plot_bscan_saves_file(tmp_path: Path):
     )
     assert out.exists()
     assert out.stat().st_size > 5000
+
+
+# --------------------------------------------------------------------------
+# processing chain recommendation
+# --------------------------------------------------------------------------
+
+def test_recommend_chain_user_specified_wins():
+    rec = visualize.recommend_chain(
+        {"chain": "advanced"}, {"waveform": {"measurement_mode": "time_domain"}}
+    )
+    assert rec["chain"] == "advanced"
+    assert rec["display_only"] is False
+    assert "user-specified" in rec["rationale"]
+
+
+def test_recommend_chain_rejects_unknown():
+    with pytest.raises(visualize.ProcessingError):
+        visualize.recommend_chain({"chain": "bogus"}, {})
+
+
+def test_recommend_chain_sfcw_contract_gets_standard():
+    rec = visualize.recommend_chain(
+        None, {"waveform": {"measurement_mode": "sfcw_equivalent"}}
+    )
+    assert rec["chain"] == "standard"
+    assert rec["display_only"] is False
+
+
+def test_recommend_chain_sfcw_high_quality_advanced():
+    rec = visualize.recommend_chain(
+        {"quality": "high"}, {"waveform": {"measurement_mode": "sfcw_equivalent"}}
+    )
+    assert rec["chain"] == "advanced"
+
+
+def test_recommend_chain_time_domain_raw():
+    rec = visualize.recommend_chain(None, {"waveform": {"measurement_mode": "time_domain"}})
+    assert rec["chain"] == "raw_visual"
+    assert rec["display_only"] is True
+
+
+def test_recommend_chain_imaging_optional():
+    rec = visualize.recommend_chain(
+        {"need_imaging": True}, {"waveform": {"measurement_mode": "sfcw_equivalent"}}
+    )
+    assert rec["chain"] == "imaging"
+    assert "imaging" in rec["rationale"]
+
+
+def test_plot_bscan_pair_saves_file(tmp_path: Path):
+    before = [np.sin(np.linspace(0, 4 * np.pi, 200)) for _ in range(5)]
+    after = [np.sin(np.linspace(0, 4 * np.pi, 200)) * 0.5 for _ in range(5)]
+    out = visualize.plot_bscan_pair(
+        before, after, tmp_path / "pair.png", delay_bin_s=1.0e-9
+    )
+    assert out.exists()
+    assert out.stat().st_size > 5000
+
+
+def test_plot_bscan_pair_rejects_shape_mismatch(tmp_path: Path):
+    before = [np.sin(np.linspace(0, 4 * np.pi, 200)) for _ in range(5)]
+    after = [np.sin(np.linspace(0, 4 * np.pi, 100)) for _ in range(5)]
+    with pytest.raises(visualize.ProcessingError):
+        visualize.plot_bscan_pair(before, after, tmp_path / "pair.png", delay_bin_s=1e-9)

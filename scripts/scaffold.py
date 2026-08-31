@@ -130,3 +130,125 @@ def describe_layout(project_root: Path) -> list[str]:
     return [str(project_root / item) for item in STANDARD_DIRECTORIES] + [
         str(project_root / item) for item in STANDARD_FILES
     ]
+
+
+# ---------------------------------------------------------------------------
+# layout discipline audit
+# ---------------------------------------------------------------------------
+
+# File suffixes that are *never* allowed inside outputs/ (raw evidence must
+# stay read-only; input/executable material there indicates a write-back).
+_OUTPUTS_FORBIDDEN_SUFFIXES = (".py", ".in", ".sh", ".bat")
+
+
+def audit_layout(study_root: Path) -> list[dict[str, str]]:
+    """Audit a study directory against the standard layout discipline.
+
+    Returns a list of findings, each ``{"check", "severity", "message"}``
+    with severity in ``OK | WARN | BLOCK``:
+
+    - standard directories and files exist (missing directory -> BLOCK,
+      missing non-optional file -> BLOCK)
+    - ``outputs/`` is non-empty and contains no input/executable material
+      (raw-evidence read-only discipline; a forbidden file -> BLOCK)
+    - the study directory name matches the study_id convention (-> WARN)
+    - no stray ``.py``/``.in`` files directly under the study root
+      (-> WARN; study-level orchestration scripts belong in ``scripts/``)
+    - ``simulation_contract.yaml`` exists and parses (unparseable -> BLOCK)
+    """
+    study_root = Path(study_root)
+    findings: list[dict[str, str]] = []
+
+    def add(check: str, severity: str, message: str) -> None:
+        findings.append({"check": check, "severity": severity, "message": message})
+
+    # 1. Standard directory layout.
+    missing_dirs = [
+        name for name in STANDARD_DIRECTORIES if not (study_root / name).is_dir()
+    ]
+    if missing_dirs:
+        add(
+            "layout",
+            "BLOCK",
+            f"missing standard directories: {', '.join(missing_dirs)}",
+        )
+    else:
+        add("layout", "OK", "standard directories present")
+
+    missing_files = [
+        name for name in STANDARD_FILES if not (study_root / name).is_file()
+    ]
+    if missing_files:
+        add(
+            "files",
+            "BLOCK",
+            f"missing standard files: {', '.join(missing_files)}",
+        )
+    else:
+        add("files", "OK", "standard files present")
+
+    # 2. outputs/ read-only discipline.
+    outputs = study_root / "outputs"
+    if outputs.is_dir():
+        entries = [p for p in outputs.iterdir() if p.is_file()]
+        if not entries:
+            add("outputs", "WARN", "outputs/ is empty (no raw evidence yet)")
+        else:
+            add("outputs", "OK", f"outputs/ holds {len(entries)} raw file(s)")
+        forbidden = [
+            p.name
+            for p in outputs.rglob("*")
+            if p.is_file() and p.suffix.lower() in _OUTPUTS_FORBIDDEN_SUFFIXES
+        ]
+        if forbidden:
+            add(
+                "outputs",
+                "BLOCK",
+                "outputs/ must stay read-only raw evidence; found input/executable "
+                f"material: {', '.join(forbidden[:5])}",
+            )
+    else:
+        add("outputs", "BLOCK", "outputs/ directory missing")
+
+    # 3. Study name convention (WARN — the name is a strong convention).
+    try:
+        validate_study_name(study_root.name)
+        add("naming", "OK", f"study name {study_root.name!r} matches <nn>_<yyyymmdd>_<TOPIC>")
+    except ScaffoldError as error:
+        add("naming", "WARN", str(error))
+
+    # 4. Stray study-root material.
+    stray = [
+        p.name
+        for p in study_root.iterdir()
+        if p.is_file()
+        and p.name not in STANDARD_FILES
+        and p.suffix.lower() in (".py", ".in")
+    ]
+    if stray:
+        add(
+            "stray",
+            "WARN",
+            "scripts/input files directly under study root (belong in "
+            f"scripts/ or cases/): {', '.join(stray[:5])}",
+        )
+    else:
+        add("stray", "OK", "no stray scripts/inputs at study root")
+
+    # 5. Contract parseability.
+    contract = study_root / "simulation_contract.yaml"
+    if contract.is_file():
+        try:
+            import yaml
+
+            value = yaml.safe_load(contract.read_text(encoding="utf-8"))
+            if not isinstance(value, dict):
+                add("contract", "BLOCK", "simulation_contract.yaml must be a mapping")
+            else:
+                add("contract", "OK", "simulation_contract.yaml parses")
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
+            add("contract", "BLOCK", f"simulation_contract.yaml unreadable ({error})")
+    else:
+        add("contract", "BLOCK", "simulation_contract.yaml missing")
+
+    return findings

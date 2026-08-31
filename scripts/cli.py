@@ -26,7 +26,7 @@ import scripts.audit_precision as audit_prec
 import scripts.materials as materials
 import scripts.probe_environment as probe
 import scripts.wizard as wizard
-from scripts.scaffold import describe_layout, create_study_skeleton
+from scripts.scaffold import audit_layout, describe_layout, create_study_skeleton
 import scripts.research as research
 import scripts.templates_lib as templates_lib
 import scripts.visualize as visualize
@@ -430,6 +430,14 @@ def _parser() -> argparse.ArgumentParser:
     tverify.add_argument("name")
     tverify.add_argument("--verified-by", nargs="+", required=True)
     tverify.add_argument("--scenarios-dir", type=Path, default=DEFAULT_SCENARIOS)
+    textract = tsub.add_parser("extract")
+    textract.add_argument("study", type=Path, help="completed study directory")
+    textract.add_argument("--scenarios-dir", type=Path, default=DEFAULT_SCENARIOS)
+    textract.add_argument(
+        "--no-draft",
+        action="store_true",
+        help="keep status from manifest (verified_by recorded) instead of forcing draft",
+    )
 
     rcmd = commands.add_parser("research")
     rcmd.add_argument("contract", type=Path)
@@ -449,6 +457,12 @@ def _parser() -> argparse.ArgumentParser:
     sprocess.add_argument("--output-dir", type=Path, default=Path("results"))
     sprocess.add_argument("--zero-pad", type=int, default=8)
     sprocess.add_argument("--regularisation", type=float, default=1e-10)
+    sprocess.add_argument(
+        "--chain",
+        choices=("auto", "raw_visual", "standard", "advanced", "imaging", "display_enhancement"),
+        default="auto",
+        help="processing chain; auto picks from contract (user --mode still wins)",
+    )
 
     dcmd = commands.add_parser("dataset")
     dsub = dcmd.add_subparsers(dest="dataset_command", required=True)
@@ -477,6 +491,11 @@ def _parser() -> argparse.ArgumentParser:
     sens_cmd = commands.add_parser("sensitivity")
     sens_cmd.add_argument("contract", type=Path)
     sens_cmd.add_argument("--perturbation", type=float, default=0.2)
+
+    lcmd = commands.add_parser("layout")
+    lsub = lcmd.add_subparsers(dest="layout_command", required=True)
+    laudit = lsub.add_parser("audit")
+    laudit.add_argument("study_dir", type=Path, help="study directory to audit")
     return parser
 
 
@@ -587,6 +606,18 @@ def _template_verify(name: str, scenarios_dir: Path, verified_by: list[str]) -> 
     return 0
 
 
+def _template_extract(study: Path, scenarios_dir: Path, no_draft: bool) -> int:
+    try:
+        target = templates_lib.extract_study_auto(
+            study, scenarios_dir, force_draft=not no_draft
+        )
+    except templates_lib.TemplateError as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
+    print(f"extracted -> {target}")
+    return 0
+
+
 def _research_needs(contract_path: Path, materials_dir: Path, scenarios_dir: Path) -> int:
     try:
         contract = load_contract(contract_path)
@@ -649,6 +680,12 @@ def _sfcw_process(args: argparse.Namespace) -> int:
             zero_pad_factor=args.zero_pad,
             regularisation=args.regularisation,
         )
+        if args.chain != "auto":
+            chain = visualize.recommend_chain({"chain": args.chain}, {})
+            print(
+                f"chain        -> {chain['chain']} (mode={chain['mode']}, "
+                f"display_only={chain['display_only']}) — {chain['rationale']}"
+            )
     except (visualize.ProcessingError, ValueError, OSError) as error:
         print(f"BLOCK {error}", file=sys.stderr)
         return 2
@@ -781,6 +818,18 @@ def _diagnose(args: argparse.Namespace) -> int:
     return 2 if blocking else 0
 
 
+def _layout_audit(study_dir: Path) -> int:
+    try:
+        findings = audit_layout(study_dir)
+    except (OSError, ValueError) as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
+    for finding in findings:
+        print(f"[{finding['severity']}] {finding['check']}: {finding['message']}")
+    blocking = any(f["severity"] == "BLOCK" for f in findings)
+    return 2 if blocking else 0
+
+
 def _sensitivity(args: argparse.Namespace) -> int:
     try:
         contract = load_contract(args.contract)
@@ -866,6 +915,8 @@ def main(argv: list[str] | None = None) -> int:
             return _template_propose(args.entry, args.scenarios_dir)
         if args.template_command == "verify":
             return _template_verify(args.name, args.scenarios_dir, args.verified_by)
+        if args.template_command == "extract":
+            return _template_extract(args.study, args.scenarios_dir, args.no_draft)
         raise AssertionError(f"unhandled template command: {args.template_command}")
     if args.command == "research":
         return _research_needs(args.contract, args.materials_dir, args.scenarios_dir)
@@ -887,6 +938,10 @@ def main(argv: list[str] | None = None) -> int:
         return _diagnose(args)
     if args.command == "sensitivity":
         return _sensitivity(args)
+    if args.command == "layout":
+        if args.layout_command == "audit":
+            return _layout_audit(args.study_dir)
+        raise AssertionError(f"unhandled layout command: {args.layout_command}")
     raise AssertionError(f"unhandled command: {args.command}")
 
 

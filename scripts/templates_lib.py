@@ -11,11 +11,15 @@ values into an unrelated study).
 
 Progressive accumulation: a completed and validated study may be proposed as
 a ``draft`` template, which becomes ``verified`` only after user confirmation
-with the validating packages recorded.
+with the validating packages recorded. ``extract_from_study`` automates the
+proposal step by reading a study directory (contract + manifest + README)
+and producing a draft entry.
 """
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -30,6 +34,9 @@ SCENARIO_TYPES = {
     "other",
 }
 STATUSES = {"draft", "verified"}
+
+# Contract files required for automatic extraction (fail-closed).
+_EXTRACT_REQUIRED_FILES = ("simulation_contract.yaml", "manifest.json")
 
 
 class TemplateError(ValueError):
@@ -237,3 +244,123 @@ def signature_from_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
     if depth is not None:
         signature["target_depth_m"] = float(depth)
     return signature
+
+
+# ---------------------------------------------------------------------------
+# progressive accumulation from a completed study
+# ---------------------------------------------------------------------------
+
+_STUDY_NAME_RE = re.compile(r"[^A-Za-z0-9]+")
+
+
+def _template_name_from_study(study_root: Path) -> str:
+    """Normalise a study directory name into a template name.
+
+    ``01_20260830_SFCW_SLIDE_WET`` -> ``01_20260830_sfcw_slide_wet``; if the
+    directory name is generic (``study``, ``my_study``), fall back to the
+    README first heading so the template is still identifiable.
+    """
+    stem = study_root.name.strip()
+    candidate = _STUDY_NAME_RE.sub("_", stem).strip("_").lower()
+    if len(candidate) < 4 or candidate in {"study", "test", "tmp"}:
+        readme = study_root / "README.md"
+        if readme.is_file():
+            for line in readme.read_text(encoding="utf-8").splitlines():
+                heading = line.strip().lstrip("#").strip()
+                if heading:
+                    candidate = _STUDY_NAME_RE.sub("_", heading).strip("_").lower()
+                    break
+    if not candidate:
+        raise TemplateError(f"cannot derive a template name from study {study_root}")
+    return candidate
+
+
+def extract_from_study(study_root: Path) -> dict[str, Any]:
+    """Build a draft template entry from a completed study directory.
+
+    Reads ``simulation_contract.yaml`` (match signature + frozen parameters)
+    and ``manifest.json`` (evidence / verification packages). Missing or
+    unparseable contract/manifest raise ``TemplateError`` — extraction is
+    fail-closed because a template with wrong frozen values is worse than
+    no template at all.
+
+    The returned entry is a draft (``status: draft``); call
+    :func:`extract_study_auto` to store it, or :func:`verify_template` to
+    promote it later once the validating packages are confirmed.
+    """
+    study_root = Path(study_root)
+    contract_path = study_root / "simulation_contract.yaml"
+    manifest_path = study_root / "manifest.json"
+    for filename in _EXTRACT_REQUIRED_FILES:
+        if not (study_root / filename).is_file():
+            raise TemplateError(
+                f"study {study_root} is missing {filename} — cannot extract a "
+                "template from incomplete evidence"
+            )
+    try:
+        contract = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
+        raise TemplateError(f"{contract_path}: unreadable YAML ({error})") from error
+    if not isinstance(contract, Mapping):
+        raise TemplateError(f"{contract_path}: contract must be a mapping")
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise TemplateError(f"{manifest_path}: unreadable JSON ({error})") from error
+
+    signature = signature_from_contract(contract)
+
+    # Frozen parameters: keep the contract's medium/waveform/numerics blocks
+    # plus the top-level project block (depth etc.). These are the values a
+    # matching study would otherwise re-derive.
+    frozen: dict[str, Any] = {}
+    for key in ("medium", "waveform", "numerics", "project"):
+        value = contract.get(key)
+        if isinstance(value, Mapping) and value:
+            frozen[key] = dict(value)
+
+    verified_by: list[str] = []
+    if isinstance(manifest, Mapping):
+        packages = manifest.get("verified_by") or manifest.get("packages") or []
+        if isinstance(packages, list):
+            verified_by = [str(p) for p in packages if str(p).strip()]
+        status = "verified" if verified_by else "draft"
+    else:
+        status = "draft"
+
+    entry: dict[str, Any] = {
+        "name": _template_name_from_study(study_root),
+        "scenario": signature["scenario_type"],
+        "status": status,
+        "verified_by": verified_by,
+        "match": {
+            "scenario_type": signature["scenario_type"],
+            "needs_sfcw": signature["needs_sfcw"],
+            "depth_range_m": None,
+        },
+        "frozen_parameters": frozen,
+        "provenance": {
+            "study_root": str(study_root),
+            "contract": "simulation_contract.yaml",
+            "manifest": "manifest.json",
+        },
+    }
+    return validate_entry(entry)
+
+
+def extract_study_auto(
+    study_root: Path, scenarios_dir: Path, *, force_draft: bool = True
+) -> Path:
+    """Extract a completed study into the template library as a draft.
+
+    This is the progressive-accumulation hook: after a study is validated and
+    its results recorded, the agent calls this to propose it as a template
+    (draft unless ``force_draft=False`` and the manifest records verified
+    packages). A verified template of the same name is never overwritten.
+    """
+    entry = extract_from_study(study_root)
+    if force_draft:
+        entry["status"] = "draft"
+        entry["verified_by"] = []
+    return propose_template(entry, scenarios_dir)

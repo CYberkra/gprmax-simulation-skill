@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import json
+
 import pytest
 import yaml
 
@@ -144,3 +146,108 @@ def test_signature_from_contract():
     sig = tl.signature_from_contract(contract)
     assert sig["scenario_type"] == "tunnel"
     assert sig["needs_sfcw"] is True
+
+
+# --------------------------------------------------------------------------
+# extract_from_study / extract_study_auto (progressive accumulation)
+# --------------------------------------------------------------------------
+
+def _study_dir(tmp_path: Path, name: str = "01_20260830_SFCW_SLIDE_WET", **manifest_overrides) -> Path:
+    root = tmp_path / name
+    root.mkdir()
+    (root / "simulation_contract.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "project": {"target_depth_m": 20.0},
+                "task": {"objective": "landslide", "claim_scope": "numerical"},
+                "medium": {"model_type": "nondispersive", "parameter_source": "literature", "eps_r": 4.0},
+                "waveform": {"excitation_mode": "pulse_broadband", "measurement_mode": "sfcw_equivalent"},
+                "numerics": {"precision_requirement": "auto", "dx_m": 0.05},
+                "acceptance": {"negative_controls": [], "sensitivity_tests": []},
+                "evidence": {"required_outputs": [], "provenance_level": "strict"},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    manifest = {"study": name, "cases": []}
+    manifest.update(manifest_overrides)
+    (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return root
+
+
+def test_extract_from_study_draft(tmp_path: Path):
+    root = _study_dir(tmp_path)
+    entry = tl.extract_from_study(root)
+    assert entry["name"] == "01_20260830_sfcw_slide_wet"
+    assert entry["scenario"] == "landslide"
+    assert entry["status"] == "draft"  # manifest has no verified_by
+    assert entry["match"]["needs_sfcw"] is True
+    assert entry["match"]["depth_range_m"] is None
+    assert "medium" in entry["frozen_parameters"]
+    assert entry["frozen_parameters"]["waveform"]["measurement_mode"] == "sfcw_equivalent"
+    assert entry["provenance"]["study_root"] == str(root)
+
+
+def test_extract_from_study_verified_from_manifest(tmp_path: Path):
+    root = _study_dir(tmp_path, verified_by=["pkgA", "pkgB"])
+    entry = tl.extract_from_study(root)
+    assert entry["status"] == "verified"
+    assert entry["verified_by"] == ["pkgA", "pkgB"]
+
+
+def test_extract_from_study_missing_contract_raises(tmp_path: Path):
+    root = _study_dir(tmp_path)
+    (root / "simulation_contract.yaml").unlink()
+    with pytest.raises(tl.TemplateError):
+        tl.extract_from_study(root)
+
+
+def test_extract_from_study_missing_manifest_raises(tmp_path: Path):
+    root = _study_dir(tmp_path)
+    (root / "manifest.json").unlink()
+    with pytest.raises(tl.TemplateError):
+        tl.extract_from_study(root)
+
+
+def test_extract_from_study_bad_manifest_raises(tmp_path: Path):
+    root = _study_dir(tmp_path)
+    (root / "manifest.json").write_text("{not json", encoding="utf-8")
+    with pytest.raises(tl.TemplateError):
+        tl.extract_from_study(root)
+
+
+def test_extract_study_auto_stores_and_matches(tmp_path: Path):
+    root = _study_dir(tmp_path)
+    scenarios = tmp_path / "scenarios"
+    target = tl.extract_study_auto(root, scenarios)
+    assert target.is_file()
+    stored = tl.load_template(target)
+    assert stored["status"] == "draft"
+    # extracted template must be matched by a study with the same signature
+    entry = tl.match_scenario(
+        {"scenario_type": "landslide", "needs_sfcw": True, "target_depth_m": 20},
+        scenarios,
+    )
+    assert entry is None  # draft is not consulted
+    tl.verify_template(stored["name"], scenarios, ["pkgA"])
+    entry = tl.match_scenario(
+        {"scenario_type": "landslide", "needs_sfcw": True, "target_depth_m": 20},
+        scenarios,
+    )
+    assert entry is not None and entry["name"] == stored["name"]
+
+
+def test_extract_study_auto_refuses_verified_overwrite(tmp_path: Path):
+    root = _study_dir(tmp_path)
+    scenarios = tmp_path / "scenarios"
+    tl.extract_study_auto(root, scenarios)
+    tl.verify_template("01_20260830_sfcw_slide_wet", scenarios, ["pkgA"])
+    with pytest.raises(tl.TemplateError):
+        tl.extract_study_auto(root, scenarios)  # verified template must not be clobbered
+
+
+def test_extract_generic_name_falls_back_to_readme(tmp_path: Path):
+    root = _study_dir(tmp_path, name="study")
+    entry = tl.extract_from_study(root)
+    assert entry["name"]  # derived from README heading or non-empty fallback

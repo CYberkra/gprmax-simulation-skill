@@ -233,6 +233,181 @@ def plot_bscan(
     return out_path
 
 
+def plot_bscan_pair(
+    before: Sequence[np.ndarray],
+    after: Sequence[np.ndarray],
+    out_path: Path,
+    *,
+    delay_bin_s: float,
+    title: str = "B-scan — before / after",
+    db_scale: bool = True,
+    vmin_db: float = -60.0,
+) -> Path:
+    """Render a before/after B-scan comparison (two stacked panels).
+
+    Shows the raw traces on top and the processed traces below, sharing the
+    same delay axis so the effect of the processing chain is visible at a
+    glance. Display-only — never feeds quantitative claims.
+    """
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _matrix(traces: Sequence[np.ndarray]) -> np.ndarray:
+        return np.stack([np.asarray(t, dtype=float) for t in traces])
+
+    before_matrix = _matrix(before)
+    after_matrix = _matrix(after)
+    if before_matrix.shape != after_matrix.shape:
+        raise ProcessingError(
+            "plot_bscan_pair requires before/after traces of identical shape "
+            f"({before_matrix.shape} vs {after_matrix.shape})"
+        )
+    n, m = before_matrix.shape
+    t = np.arange(m) * delay_bin_s
+    extent = [0, n - 1, t[0] * 1e9, t[-1] * 1e9]
+
+    fig, axes = plt.subplots(2, 1, figsize=(9, 9), sharex=True)
+    panels = [("before", before_matrix), ("after", after_matrix)]
+    for ax, (label, matrix) in zip(axes, panels):
+        if db_scale:
+            amplitude = np.abs(matrix)
+            scale = amplitude.max() if amplitude.max() > 0 else 1.0
+            display = 20 * np.log10(amplitude / scale + 1e-12)
+            im = ax.imshow(
+                display.T, aspect="auto", origin="lower", extent=extent,
+                cmap="viridis", vmin=vmin_db, vmax=0,
+            )
+        else:
+            im = ax.imshow(
+                np.abs(matrix).T, aspect="auto", origin="lower", extent=extent,
+                cmap="viridis",
+            )
+        ax.set_title(f"{label}", fontsize=10)
+        ax.set_ylabel("Delay (ns)")
+    axes[-1].set_xlabel("Trace index")
+    fig.suptitle(title, fontsize=11)
+    fig.colorbar(im, ax=axes, shrink=0.9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=140)
+    plt.close(fig)
+    return out_path
+
+
+# ---------------------------------------------------------------------------
+# processing chain catalogue & recommendation
+# ---------------------------------------------------------------------------
+
+# The five chain families from the design (docs §8). ``display_only`` chains
+# are for viewing only and must never feed quantitative claims; ``mode`` is
+# the SFCW chain used by ``process_trace`` (None = direct plotting, no
+# synthesis). ``parameters`` are the defaults handed to ``process_trace``.
+CHAIN_CATALOGUE: dict[str, dict[str, Any]] = {
+    "raw_visual": {
+        "mode": None,
+        "display_only": True,
+        "parameters": {},
+        "purpose": "Ascan/Bscan 直接绘制（时间-幅度），快速查看原始结果",
+    },
+    "standard": {
+        "mode": "impulse_lti",
+        "display_only": False,
+        "parameters": {"zero_pad_factor": 8, "ramp_k": 0.1, "integration_cycles": 4.0},
+        "purpose": "标准链：去直达波 / 背景相减（诊断）/ SFCW 融合（对齐刘2021）",
+    },
+    "advanced": {
+        "mode": "impulse_lti",
+        "display_only": False,
+        "parameters": {
+            "zero_pad_factor": 16,
+            "window": None,
+            "regularisation": 1e-10,
+            "ramp_k": 0.1,
+            "integration_cycles": 4.0,
+        },
+        "purpose": "高级链：去卷积(Wiener) + 加窗(Blackman) + zero-padded IFFT + Hilbert 包络",
+    },
+    "imaging": {
+        "mode": "impulse_lti",
+        "display_only": False,
+        "optional": True,
+        "parameters": {"zero_pad_factor": 16},
+        "purpose": "成像：BP/Kirchhoff 孔径聚焦（可选，按需启用）",
+    },
+    "display_enhancement": {
+        "mode": None,
+        "display_only": True,
+        "parameters": {},
+        "purpose": "显示增强：归一化 / AGC / 裁剪，仅显示，不参与定量",
+    },
+}
+
+
+def recommend_chain(
+    requirements: Mapping[str, Any] | None, contract: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Pick a processing chain, honouring an explicit user request first.
+
+    ``requirements`` may carry ``chain`` (one of :data:`CHAIN_CATALOGUE`),
+    ``need_imaging`` (bool), ``quality`` ("quick" | "standard" | "high").
+    An explicit ``chain`` always wins (user-specified priority). Otherwise
+    the choice is derived from the contract: SFCW-equivalent studies get the
+    standard/advanced chain, time-domain studies get raw visualisation, and
+    ``need_imaging`` flags the optional imaging chain.
+
+    Returns ``{chain, mode, parameters, display_only, rationale}``.
+    """
+    req = dict(requirements or {})
+    contract = dict(contract or {})
+
+    requested = req.get("chain")
+    if requested is not None:
+        if requested not in CHAIN_CATALOGUE:
+            raise ProcessingError(
+                f"unknown chain {requested!r}; expected one of {sorted(CHAIN_CATALOGUE)}"
+            )
+        spec = dict(CHAIN_CATALOGUE[requested])
+        return {
+            "chain": requested,
+            "mode": spec.get("mode"),
+            "parameters": dict(spec.get("parameters", {})),
+            "display_only": bool(spec.get("display_only", False)),
+            "rationale": f"user-specified chain {requested!r}",
+        }
+
+    waveform = contract.get("waveform", {})
+    measurement = (
+        waveform.get("measurement_mode", "time_domain")
+        if isinstance(waveform, Mapping)
+        else "time_domain"
+    )
+    quality = req.get("quality", "standard")
+    chain_name = "raw_visual"
+    rationale = "time-domain study → raw visualisation"
+    if measurement == "sfcw_equivalent":
+        chain_name = "advanced" if quality == "high" else "standard"
+        rationale = (
+            "SFCW-equivalent study → "
+            + ("advanced chain (high quality)" if quality == "high" else "standard chain")
+        )
+    if req.get("need_imaging"):
+        rationale += "; imaging chain available on request"
+        return {
+            "chain": "imaging",
+            "mode": CHAIN_CATALOGUE["imaging"].get("mode"),
+            "parameters": dict(CHAIN_CATALOGUE["imaging"].get("parameters", {})),
+            "display_only": False,
+            "rationale": rationale,
+        }
+    spec = CHAIN_CATALOGUE[chain_name]
+    return {
+        "chain": chain_name,
+        "mode": spec.get("mode"),
+        "parameters": dict(spec.get("parameters", {})),
+        "display_only": bool(spec.get("display_only", False)),
+        "rationale": rationale,
+    }
+
+
 def save_processing_parameters(result: Mapping[str, Any], out_path: Path) -> Path:
     """Persist the processing parameters (and small result summary) as JSON."""
     out_path = Path(out_path)
