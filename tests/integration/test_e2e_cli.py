@@ -253,3 +253,106 @@ def test_e2e_report_model_card_and_sketch(tmp_path: Path):
     )
     rc = main(["sketch", "geometry", str(bad_path), "--out", str(tmp_path / "bad.png")])
     assert rc == 2, "sketch without target depth must block"
+
+
+def test_e2e_full_realdata_chain(tmp_path: Path):
+    """Real fixture: init → hash → audit → extract → report → sketch → check-model."""
+    import shutil
+
+    study = tmp_path / "01_20260831_FULLCHAIN"
+    rc = main(["init", str(study), "--name", study.name])
+    assert rc == 0, "init failed"
+
+    # Real contract
+    contract = {
+        "project": {"design_type": "single_variable", "design_subtype": "single_case",
+                     "factors": [], "invariants": [], "target_depth_m": 80.0, "target_size_m": 4.0},
+        "model": {"dimension": "3d"},
+        "task": {"objective": "tunnel", "claim_scope": "numerical"},
+        "medium": {"target_material": "WET", "medium_material": "coal",
+                   "model_type": "debye", "parameter_source": "literature"},
+        "waveform": {"excitation_mode": "unit_impulse", "solver_excitation": "unit_impulse",
+                     "measurement_mode": "sfcw_equivalent", "processing_route": "impulse_lti",
+                     "band_mhz": "30-240"},
+        "numerics": {"precision_requirement": "fp32", "pml_layers": 20},
+        "geometry": {"target_level": "L3", "antenna": "ideal_hertzian", "noise": "none"},
+        "acceptance": {"negative_controls": [], "sensitivity_tests": []},
+        "evidence": {"required_outputs": ["rxs/rx1/Ez"], "provenance_level": "strict"},
+    }
+    (study / "simulation_contract.yaml").write_text(
+        yaml.safe_dump(contract, sort_keys=False), encoding="utf-8"
+    )
+
+    # Copy real .out fixture
+    fixture = Path("tests/fixtures/real_out/mini_3d_rx1.out")
+    if fixture.is_file():
+        shutil.copy(fixture, study / "outputs" / "case.out")
+    else:
+        pytest.skip("real fixture missing")
+
+    # layout hash
+    rc = main(["layout", "hash", str(study)])
+    assert rc == 0, f"hash failed: {rc}"
+
+    # layout audit
+    rc = main(["layout", "audit", str(study)])
+    assert rc == 0, f"audit failed: {rc}"
+
+    # template extract
+    scenarios = tmp_path / "scenarios"
+    scenarios.mkdir()
+    rc = main(["template", "extract", str(study), "--scenarios-dir", str(scenarios)])
+    assert rc == 0, f"extract failed: {rc}"
+
+    # report model-card
+    card = study / "analysis" / "card.md"
+    rc = main(["report", "model-card", str(study / "simulation_contract.yaml"),
+               "--out", str(card)])
+    assert rc == 0, f"report failed: {rc}"
+    assert "## 处理链" in card.read_text(encoding="utf-8")
+
+    # sketch geometry
+    png = study / "analysis" / "sketch.png"
+    rc = main(["sketch", "geometry", str(study / "simulation_contract.yaml"),
+               "--out", str(png)])
+    assert rc == 0, f"sketch failed: {rc}"
+    assert png.stat().st_size > 5000
+
+    # dataset check-model — established
+    rc = main(["dataset", "check-model", "--study", str(study)])
+    assert rc == 0, f"check-model should pass: {rc}"
+
+
+def test_e2e_wizard_dump_with_sketch(tmp_path: Path):
+    """wizard dump --sketch renders a geometry sketch from the contract draft."""
+    session = tmp_path / "sess"
+    rc = main(["wizard", "init", str(session)])
+    assert rc == 0
+
+    for field, value in (
+        ("scenario_type", "tunnel"),
+        ("target_depth_m", "80"),
+        ("target_material", "WET"),
+        ("medium_material", "coal"),
+        ("needs_sfcw", "true"),
+        ("band_mhz", "30-240"),
+        ("fidelity", "standard"),
+        ("dimension", "3d"),
+        ("run_env", "server"),
+    ):
+        rc = main(["wizard", "answer", str(session), field, value])
+        assert rc == 0, f"answer {field} failed: {rc}"
+
+    dump_path = tmp_path / "dump.yaml"
+    sketch_path = tmp_path / "sketch.png"
+    rc = main(
+        [
+            "wizard", "dump", str(session),
+            "--out", str(dump_path),
+            "--sketch", str(sketch_path),
+        ]
+    )
+    assert rc == 0, f"wizard dump failed: {rc}"
+    assert dump_path.is_file(), "dump file missing"
+    assert sketch_path.is_file(), "sketch PNG missing"
+    assert sketch_path.stat().st_size > 5000, "empty sketch"

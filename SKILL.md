@@ -56,6 +56,13 @@ intents), read
 research-need identification, and scene-template progressive accumulation, read
 [study-materials.md](references/study-materials.md).
 
+Generate a geometry cross-section sketch at wizard dump time
+(`wizard dump --sketch <out.png>`) so the user sees the domain, host medium,
+target at depth, and Tx/Rx before any mesh exists. When the model is
+established, produce a model-card report (`report model-card <contract>`) that
+consolidates the contract, numerical gates, sensitivity, processing chain, and
+environment into a single deliverable.
+
 ## Run controlled batches
 
 For a parameter scan, define dimensions in the contract or a CSV matrix, expand

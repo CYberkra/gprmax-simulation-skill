@@ -422,6 +422,12 @@ def _parser() -> argparse.ArgumentParser:
     wdump = wsub.add_parser("dump")
     wdump.add_argument("session", type=Path)
     wdump.add_argument("--out", type=Path)
+    wdump.add_argument(
+        "--sketch",
+        type=Path,
+        default=None,
+        help="also render a geometry cross-section sketch to this PNG after dump",
+    )
 
     tcmd = commands.add_parser("template")
     tsub = tcmd.add_subparsers(dest="template_command", required=True)
@@ -555,7 +561,7 @@ def _wizard_status(session_path: Path) -> int:
     return 0
 
 
-def _wizard_dump(session_path: Path, out: Path | None) -> int:
+def _wizard_dump(session_path: Path, out: Path | None, sketch_path: Path | None) -> int:
     session = wizard.load_session(session_path)
     try:
         payload = wizard.dump(session)
@@ -571,6 +577,13 @@ def _wizard_dump(session_path: Path, out: Path | None) -> int:
         print(f"dump written -> {out}")
     else:
         print(__import__("yaml").safe_dump(payload, sort_keys=False, allow_unicode=True), end="")
+    if sketch_path is not None:
+        try:
+            contract = payload.get("contract_draft", {})
+            sketch.plot_geometry_sketch(contract, sketch_path)
+            print(f"sketch written -> {sketch_path}")
+        except (sketch.SketchError, ValueError) as error:
+            print(f"WARN sketch not rendered: {error}", file=sys.stderr)
     return 0
 
 
@@ -1021,7 +1034,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.wizard_command == "status":
             return _wizard_status(args.session)
         if args.wizard_command == "dump":
-            return _wizard_dump(args.session, args.out)
+            return _wizard_dump(args.session, args.out, args.sketch)
         raise AssertionError(f"unhandled wizard command: {args.wizard_command}")
     if args.command == "template":
         if args.template_command == "list":

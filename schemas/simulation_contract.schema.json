@@ -13,6 +13,22 @@
   "properties": {
     "project": {
       "type": "object",
+      "properties": {
+        "design_type": {
+          "type": "string",
+          "enum": ["single_variable", "multi_factor"]
+        },
+        "design_subtype": {
+          "type": "string",
+          "enum": ["single_case", "one_factor", "factorial"]
+        },
+        "factors": { "type": "array", "items": { "type": "string" } },
+        "invariants": { "type": "array", "items": { "type": "string" } },
+        "target_depth_m": { "type": "number", "exclusiveMinimum": 0 },
+        "target_size_m": { "type": "number", "exclusiveMinimum": 0 },
+        "name": { "type": "string", "minLength": 1 },
+        "note": { "type": "string" }
+      },
       "additionalProperties": true
     },
     "model": {
@@ -31,7 +47,10 @@
       "required": ["objective", "claim_scope"],
       "properties": {
         "objective": { "type": "string", "minLength": 1 },
-        "claim_scope": { "type": "string", "minLength": 1 }
+        "claim_scope": {
+          "type": "string",
+          "enum": ["numerical", "physical", "engineering"]
+        }
       },
       "additionalProperties": true
     },
@@ -39,8 +58,18 @@
       "type": "object",
       "required": ["model_type", "parameter_source"],
       "properties": {
-        "model_type": { "type": "string", "minLength": 1 },
-        "parameter_source": { "type": "string", "minLength": 1 }
+        "model_type": {
+          "type": "string",
+          "enum": ["none", "debye", "lorentz", "drude", "measured_complex", "nondispersive"]
+        },
+        "parameter_source": {
+          "type": "string",
+          "enum": ["measured", "literature", "assumed", "sensitivity"]
+        },
+        "target_material": { "type": "string", "minLength": 1 },
+        "medium_material": { "type": "string", "minLength": 1 },
+        "eps_r": { "type": "number" },
+        "sigma_s_m": { "type": "number" }
       },
       "additionalProperties": true
     },
@@ -48,8 +77,27 @@
       "type": "object",
       "required": ["excitation_mode", "measurement_mode"],
       "properties": {
-        "excitation_mode": { "type": "string", "minLength": 1 },
-        "measurement_mode": { "type": "string", "minLength": 1 }
+        "excitation_mode": {
+          "type": "string",
+          "enum": ["unit_impulse", "pulse_broadband", "custom"]
+        },
+        "solver_excitation": {
+          "type": "string",
+          "enum": ["unit_impulse", "pulse_broadband", "custom"]
+        },
+        "measurement_mode": {
+          "type": "string",
+          "enum": ["time_domain", "sfcw_equivalent"]
+        },
+        "processing_route": {
+          "type": "string",
+          "enum": ["direct_time_domain", "impulse_lti", "broadband_deconvolution"]
+        },
+        "band_mhz": {
+          "type": "string",
+          "pattern": "^\\s*\\d+(?:\\.\\d+)?\\s*-\\s*\\d+(?:\\.\\d+)?\\s*$"
+        },
+        "df_mhz": { "type": "number", "exclusiveMinimum": 0 }
       },
       "additionalProperties": true
     },
@@ -57,7 +105,35 @@
       "type": "object",
       "required": ["precision_requirement"],
       "properties": {
-        "precision_requirement": { "type": "string", "minLength": 1 }
+        "precision_requirement": {
+          "type": "string",
+          "enum": ["auto", "fp32", "fp64", "float32", "float64"]
+        },
+        "pml_layers": { "type": ["integer", "string"] },
+        "dx_m": { "type": "number", "exclusiveMinimum": 0 },
+        "dy_m": { "type": "number", "exclusiveMinimum": 0 },
+        "dz_m": { "type": "number", "exclusiveMinimum": 0 },
+        "dt_s": { "type": "number", "exclusiveMinimum": 0 },
+        "time_window_s": { "type": "number", "exclusiveMinimum": 0 },
+        "note": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "geometry": {
+      "type": "object",
+      "properties": {
+        "target_level": {
+          "type": "string",
+          "enum": ["L1", "L2", "L3", "L4"]
+        },
+        "antenna": {
+          "type": "string",
+          "enum": ["ideal_hertzian", "physical", "plane_wave", "none"]
+        },
+        "noise": {
+          "type": "string",
+          "enum": ["none", "awgn", "clutter"]
+        }
       },
       "additionalProperties": true
     },
@@ -75,7 +151,10 @@
       "required": ["required_outputs", "provenance_level"],
       "properties": {
         "required_outputs": { "type": "array" },
-        "provenance_level": { "type": "string", "minLength": 1 }
+        "provenance_level": {
+          "type": "string",
+          "enum": ["strict", "standard", "review"]
+        }
       },
       "additionalProperties": true
     }
