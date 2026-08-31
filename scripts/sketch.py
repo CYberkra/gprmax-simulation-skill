@@ -164,12 +164,13 @@ def plot_geometry_sketch(
         fontsize=9,
         color=_TEXT,
     )
-    # Faded gridlines + clean axes.
+    # Faded gridlines + clean axes. z=0 (surface, Tx/Rx) sits at the TOP;
+    # depth increases downward — the physical convention for radar sketches.
     ax.grid(True, color=_GRID, alpha=0.6, lw=0.6)
     ax.set_xlim(0, x_extent)
-    ax.set_ylim(-z_extent * 0.18, z_extent)
+    ax.set_ylim(z_extent, -z_extent * 0.18)
     ax.set_xlabel("x (m)", color=_TEXT)
-    ax.set_ylabel("z (m) — 深度", color=_TEXT)
+    ax.set_ylabel("深度 z (m) ↓", color=_TEXT)
     ax.set_title(title or "几何截面草图（向导期，示意）", color=_TEXT, fontsize=12)
     ax.legend(loc="upper right", fontsize=8, frameon=False)
     for spine in ax.spines.values():
