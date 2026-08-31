@@ -1,7 +1,21 @@
+# Gate status report — example output from a real preflight run.
+# The schema is defined in schemas/gate_status.schema.json.
+# See references/gates-and-claims.md for the vocabulary.
 results:
-  - gate_id: example_gate
-    state: NOT_APPLICABLE
-    code: NOT_APPLICABLE
-    summary: No gate result has been recorded for this template.
+  - gate_id: environment
+    state: PASS
+    code: PASS_ENVIRONMENT_LOCKED
+    summary: runtime identity resolved from declared manifest
+    evidence:
+      - processing_id=test
+      - delta_f_hz=1000000.0
+      - delay_bin_s=1.2376237623762376e-09
+      - unambiguous_delay_s=1e-06
+    invalidates:
+      - numerics
+  - gate_id: grid
+    state: BLOCK
+    code: BLOCK_NUMERICS_INVALID
+    summary: grid check failed — insufficient cells per wavelength
     evidence: []
     invalidates: []

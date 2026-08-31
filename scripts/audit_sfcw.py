@@ -197,6 +197,20 @@ def audit_sfcw(ctx: GateContext) -> GateResult:
             "zero_pad_factor": zero_pad_factor,
         }
         ctx.artifacts["sfcw_audit"] = report
+        if max_delay_s is None:
+            return GateResult(
+                "sfcw",
+                GateState.PASS_WITH_LIMITATION,
+                "PASS_SFCW_WITHOUT_DELAY_LIMIT",
+                "SFCW checks pass but requested_max_delay_s is not declared; "
+                "unambiguous-delay coverage is unverified",
+                evidence=(
+                    f"processing_id={processing_id}",
+                    f"delta_f_hz={delta_f_hz}",
+                    f"unambiguous_delay_s={ambiguity_s}",
+                ),
+                invalidates=("processing", "metrics", "claims"),
+            )
         return GateResult(
             "sfcw",
             GateState.PASS,

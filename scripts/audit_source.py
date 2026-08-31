@@ -70,6 +70,12 @@ def audit_source(ctx: GateContext) -> GateResult:
             if minimum_support is None
             else float(np.mean(support_ratios < minimum_support))
         )
+        # normalized_power_ratios is the SQUARE of the amplitude support
+        # ratios: deconvolution conditioning (regularization) is compared
+        # against a power-based notch threshold, while
+        # source.minimum_support_ratio is an AMPLITUDE threshold. Keep the
+        # two units explicit so they are not conflated.
+        power_ratios = support_ratios**2
         peak_index = int(np.argmax(np.abs(signal)))
         peak_time_s = source_peak_time(signal, dt_s)
         tail_fraction = tail_energy_fraction(signal, peak_index)
@@ -87,9 +93,9 @@ def audit_source(ctx: GateContext) -> GateResult:
             "peak_time_s": peak_time_s,
             "tail_energy_fraction": tail_fraction,
             "dc_ratio": dc_ratio,
-            "minimum_support_ratio": minimum_support,
+            "minimum_support_ratio": minimum_support,  # amplitude threshold
             "minimum_observed_support_ratio": float(support_ratios.min()),
-            "normalized_power_ratios": [float(value) for value in support_ratios**2],
+            "normalized_power_ratios": [float(value) for value in power_ratios],
             "notch_fraction": notch_fraction,
         }
         ctx.artifacts["source_audit"] = report

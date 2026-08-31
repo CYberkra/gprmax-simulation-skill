@@ -618,52 +618,70 @@ Before sign-off, produce evidence manifest, hashes, claim ledger, and gate summa
 
 ```text
 gprmax-simulation/
-├── SKILL.md
+├── SKILL.md                      # orchestration entry point
+├── agents/
+│   └── openai.yaml               # interface description for model routing
 ├── references/
-│   ├── 01-physics-contract.md
-│   ├── 02-fidelity-promotion.md
-│   ├── 03-numerical-validity.md
-│   ├── 04-source-waveform.md
-│   ├── 05-sfcw.md
-│   ├── 06-antenna-port-system.md
-│   ├── 07-materials.md
-│   ├── 08-geometry-targets.md
-│   ├── 09-postprocessing.md
-│   ├── 10-detection-resolution-inversion.md
-│   ├── 11-evidence-provenance.md
-│   └── 12-failure-catalog.md
+│   ├── simulation-contract.md
+│   ├── numerical-model-validity.md
+│   ├── source-and-sfcw.md
+│   ├── preflight-and-audit.md
+│   ├── interpretation-and-claims.md
+│   └── gates-and-claims.md
 ├── schemas/
 │   ├── simulation_contract.schema.json
 │   ├── run_manifest.schema.json
-│   ├── gate_status.schema.json
-│   ├── claim_ledger.schema.json
-│   └── failure_event.schema.json
+│   └── gate_status.schema.json
 ├── scripts/
-│   ├── preflight.py
+│   ├── cli.py                    # CLI dispatch (init/probe/material/wizard/
+│   │                             #   template/research/preflight/promote/
+│   │                             #   validate-source/sfcw process)
+│   ├── core.py                   # GateState/ClaimState/GateResult
+│   ├── gates.py                  # GateRegistry + dependency invalidation
+│   ├── contracts.py              # simulation_contract validation
+│   ├── fidelity.py               # F0-F5 promotion
+│   ├── scaffold.py               # study directory skeleton
+│   ├── probe_environment.py      # local environment probe
+│   ├── materials.py              # material library (YAML + index)
+│   ├── templates_lib.py          # scene template library (strict match)
+│   ├── research.py               # research-need identification
+│   ├── wizard.py                 # guided-setup session state machine
+│   ├── axes.py                   # configuration-axis recommendations
+│   ├── numerics.py               # cells/λ, CFL, PML, window, resource estimates
+│   ├── sfcw.py                   # SFCW processing chains (3 modes)
+│   ├── sfcw_math.py              # exact DTFT, Wiener, delay de-embedding
+│   ├── visualize.py              # A-scan / B-scan figures
 │   ├── audit_environment.py
 │   ├── audit_geometry.py
+│   ├── audit_materials.py
+│   ├── audit_numerics.py
 │   ├── audit_precision.py
 │   ├── audit_source.py
 │   ├── audit_sfcw.py
-│   ├── audit_pair_contract.py
-│   ├── audit_antenna_port.py
-│   ├── audit_receiver_chain.py
-│   ├── audit_processing.py
-│   ├── audit_claims.py
-│   └── freeze_evidence.py
+│   └── gprmax_static_profile.py  # structural validation of deck profile
+├── gui/
+│   ├── app.py                    # FastAPI entry (optional, `gui` extra)
+│   ├── api.py                    # routes delegating to scripts.*
+│   └── static/                   # index.html + app.js
 ├── tests/
-│   ├── unit/
-│   ├── synthetic/
-│   ├── regression/
-│   └── fixtures/
-├── case-studies/
-│   └── historical-gprmax-lessons/
-└── templates/
-    ├── simulation_contract.yaml
-    ├── model_purpose.yaml
-    ├── gate_status.yaml
-    └── claim_ledger.yaml
+│   ├── unit/                     # per-module unit tests (pytest)
+│   └── synthetic/                # independent analytic-baseline checks
+├── templates/
+│   ├── simulation_contract.yaml
+│   ├── model_purpose.yaml
+│   ├── gate_status.yaml
+│   └── scenarios/
+│       └── coal_tunnel_sfcw.yaml # verified scene template (case study)
+└── docs/
+    ├── gprmax-hard-won-lessons-draft.md   # Chinese design draft
+    └── superpowers/                       # design spec + implementation plans
 ```
+
+Not yet implemented (design intent, see plans): `claim_ledger.schema.json`,
+`failure_event.schema.json`, `scripts/freeze_evidence.py`,
+`case-studies/historical-gprmax-lessons/`, and a `tests/regression/` suite.
+The claim lifecycle (`UNVERIFIED → VERIFIED`) and historical-failure regression
+suite are open items tracked in the implementation plans.
 
 `SKILL.md` remains an orchestration layer. Detailed technical rules live in modular references and are loaded only when relevant.
 
