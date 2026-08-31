@@ -118,6 +118,92 @@ def test_match_scenario_ignores_draft(tmp_path: Path):
     assert entry is None  # draft templates are not consulted
 
 
+def _write_verified_pair(tmp_path: Path) -> None:
+    """Write a base template and a more-specific irregular template."""
+    base = _valid_entry(
+        status="verified",
+        verified_by=["pkg"],
+        match={"scenario_type": "tunnel", "needs_sfcw": True, "depth_range_m": [50, 100]},
+    )
+    irregular = _valid_entry(
+        name="coal_tunnel_irregular_fp64",
+        status="verified",
+        verified_by=["pkg2"],
+        match={
+            "scenario_type": "tunnel",
+            "needs_sfcw": True,
+            "depth_range_m": [50, 100],
+            "geometry_type": "irregular",
+        },
+    )
+    (tmp_path / "coal_tunnel_sfcw.yaml").write_text(
+        yaml.safe_dump(base, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    (tmp_path / "coal_tunnel_irregular_fp64.yaml").write_text(
+        yaml.safe_dump(irregular, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+
+
+def test_match_scenario_prefers_specific_template(tmp_path: Path):
+    """Regression: when two templates match, the more specific one wins."""
+    _write_verified_pair(tmp_path)
+    # irregular signature -> the irregular-specific template wins
+    entry = tl.match_scenario(
+        {
+            "scenario_type": "tunnel",
+            "needs_sfcw": True,
+            "target_depth_m": 80,
+            "geometry_type": "irregular",
+        },
+        tmp_path,
+    )
+    assert entry is not None
+    assert entry["name"] == "coal_tunnel_irregular_fp64"
+
+
+def test_match_scenario_falls_back_to_generic(tmp_path: Path):
+    """Regression: a regular (or geometry-unspecified) study gets the base."""
+    _write_verified_pair(tmp_path)
+    # no geometry_type in the signature -> base template wins
+    entry = tl.match_scenario(
+        {"scenario_type": "tunnel", "needs_sfcw": True, "target_depth_m": 80}, tmp_path
+    )
+    assert entry is not None
+    assert entry["name"] == "coal_tunnel_sfcw"
+    # explicit regular geometry -> irregular template is excluded, base wins
+    entry = tl.match_scenario(
+        {
+            "scenario_type": "tunnel",
+            "needs_sfcw": True,
+            "target_depth_m": 80,
+            "geometry_type": "regular",
+        },
+        tmp_path,
+    )
+    assert entry is not None
+    assert entry["name"] == "coal_tunnel_sfcw"
+
+
+def test_signature_from_contract_geometry_type():
+    base = {
+        "task": {"objective": "tunnel"},
+        "waveform": {"measurement_mode": "sfcw_equivalent"},
+    }
+    assert tl.signature_from_contract(base).get("geometry_type") is None
+    assert (
+        tl.signature_from_contract(
+            {**base, "geometry": {"target_level": "L1"}}
+        )["geometry_type"]
+        == "regular"
+    )
+    assert (
+        tl.signature_from_contract(
+            {**base, "geometry": {"target_level": "L3"}}
+        )["geometry_type"]
+        == "irregular"
+    )
+
+
 def test_verify_promotes(tmp_path: Path):
     (tmp_path / "t.yaml").write_text(
         yaml.safe_dump(_valid_entry(), sort_keys=False, allow_unicode=True),

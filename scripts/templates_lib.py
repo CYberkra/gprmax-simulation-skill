@@ -90,10 +90,16 @@ def validate_entry(value: Mapping[str, Any], path: str = "<template>") -> dict[s
             raise TemplateError(
                 f"{path}: 'match.depth_range_m' must be [lo, hi] with 0 <= lo <= hi"
             )
+    geometry_type = match.get("geometry_type")
+    if geometry_type is not None and geometry_type not in ("regular", "irregular"):
+        raise TemplateError(
+            f"{path}: 'match.geometry_type' must be 'regular' or 'irregular'"
+        )
     entry["match"] = {
         "scenario_type": match["scenario_type"],
         "needs_sfcw": needs_sfcw,
         "depth_range_m": tuple(depth_range) if depth_range is not None else None,
+        "geometry_type": geometry_type,
     }
 
     if "frozen_parameters" not in entry or not isinstance(
@@ -136,10 +142,16 @@ def match_scenario(
 ) -> dict[str, Any] | None:
     """Strict-match a study signature against *verified* templates only.
 
-    ``signature`` carries ``scenario_type`` (str), ``needs_sfcw`` (bool), and
-    optionally ``target_depth_m`` (float). Every key present on the template's
-    match signature must equal the study's value; otherwise no template is
-    returned. Unverified (draft) templates are never consulted.
+    Collects all templates that strictly match the required keys
+    (``scenario_type``, ``needs_sfcw``) and any optional constraints
+    (``depth_range_m``, ``geometry_type``) that the signature also provides.
+    If a template declares an optional constraint that the signature does
+    *not* provide, the template is skipped (fail-closed — the constraint
+    cannot be verified). Among the remaining templates, the one with the
+    most satisfied optional constraints (most specific) is returned; ties
+    are broken by template name (stable).
+
+    Unverified (draft) templates are never consulted.
     """
     scenario_type = signature.get("scenario_type")
     if not isinstance(scenario_type, str):
@@ -149,6 +161,8 @@ def match_scenario(
         raise TemplateError("signature.needs_sfcw is required")
 
     index = build_index(scenarios_dir)
+    candidates: list[tuple[int, str, dict[str, Any]]] = []  # (specificity, name, entry)
+
     for name, meta in index.items():
         if meta["status"] != "verified":
             continue
@@ -158,15 +172,38 @@ def match_scenario(
             continue
         if match["needs_sfcw"] != needs_sfcw:
             continue
+
+        specificity = 0
+        ok = True
+
         depth_range = match.get("depth_range_m")
         if depth_range is not None:
             depth = signature.get("target_depth_m")
             if depth is None:
-                continue  # template constrains depth but study does not say
-            if not (depth_range[0] <= float(depth) <= depth_range[1]):
-                continue
-        return entry
-    return None
+                ok = False  # template constrains depth but study does not say
+            elif depth_range[0] <= float(depth) <= depth_range[1]:
+                specificity += 1
+            else:
+                ok = False
+
+        geometry_type = match.get("geometry_type")
+        if geometry_type is not None:
+            sig_geom = signature.get("geometry_type")
+            if sig_geom is None:
+                ok = False  # template constrains geometry but study does not say
+            elif sig_geom == geometry_type:
+                specificity += 1
+            else:
+                ok = False
+
+        if ok:
+            candidates.append((specificity, name, entry))
+
+    if not candidates:
+        return None
+    # Highest specificity first; tie-break by name (stable).
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    return candidates[0][2]
 
 
 def propose_template(
@@ -233,6 +270,11 @@ def signature_from_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(contract.get("waveform"), Mapping)
         else {}
     )
+    geometry = (
+        contract.get("geometry", {})
+        if isinstance(contract.get("geometry"), Mapping)
+        else {}
+    )
     measurement = waveform.get("measurement_mode", "time_domain")
     signature: dict[str, Any] = {
         "scenario_type": task.get("objective", "other"),
@@ -243,6 +285,11 @@ def signature_from_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
     ) else None
     if depth is not None:
         signature["target_depth_m"] = float(depth)
+    target_level = geometry.get("target_level")
+    if target_level in ("L1", "L2"):
+        signature["geometry_type"] = "regular"
+    elif target_level in ("L3", "L4"):
+        signature["geometry_type"] = "irregular"
     return signature
 
 
