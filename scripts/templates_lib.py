@@ -78,10 +78,10 @@ def validate_entry(value: Mapping[str, Any], path: str = "<template>") -> dict[s
             isinstance(depth_range, (list, tuple))
             and len(depth_range) == 2
             and all(isinstance(v, (int, float)) for v in depth_range)
-            and depth_range[0] <= depth_range[1]
+            and 0 <= depth_range[0] <= depth_range[1]
         ):
             raise TemplateError(
-                f"{path}: 'match.depth_range_m' must be [lo, hi] with lo <= hi"
+                f"{path}: 'match.depth_range_m' must be [lo, hi] with 0 <= lo <= hi"
             )
     entry["match"] = {
         "scenario_type": match["scenario_type"],

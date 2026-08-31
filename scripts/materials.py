@@ -97,17 +97,14 @@ def validate_entry(value: Mapping[str, Any], path: str = "<entry>") -> dict[str,
 def _has_permittivity(properties: Mapping[str, Any]) -> bool:
     if "eps_r" in properties:
         return True
-    if properties.get("model") in {"debye", "lorentz", "drude"}:
+    model = properties.get("model")
+    if model == "measured_complex":
+        # A measured complex permittivity implies a data source provides the
+        # frequency-dependent values; no scalar eps_r is required.
+        return True
+    if model in {"debye", "lorentz", "drude"}:
         return any(properties.get(field) is not None for field in ("eps_inf", "eps_s"))
     return False
-
-
-def _category_of(path: Path) -> str:
-    # Infer category from the library subdirectory: materials/<category>/x.yaml
-    parts = path.parts
-    if len(parts) >= 2 and parts[-2] != "materials":
-        return parts[-2]
-    return "other"
 
 
 def load_material(path: Path) -> dict[str, Any]:

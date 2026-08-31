@@ -6,9 +6,8 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from scripts.core import GateContext, GateResult, GateState, write_json
+from scripts.numerics import SPEED_OF_LIGHT_M_S as C0
 
-
-C0 = 299_792_458.0
 _ANALYTIC_ARTIFACT = "artifacts/analytic_sanity.json"
 
 

@@ -175,7 +175,7 @@ def test_run_chain_all_modes_have_shape():
 
 def test_run_chain_rejects_missing_inputs():
     with pytest.raises(ValueError):
-        sfcw.run_chain("impulse_lti", dt_s=DT, frequencies=[F_LO])  # no h
+        sfcw.run_chain("impulse_lti", dt_s=DT, frequencies=[F_LO, F_HI])  # no h
     with pytest.raises(ValueError):
         sfcw.run_chain("nope", dt_s=DT)
 

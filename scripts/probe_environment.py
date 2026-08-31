@@ -97,7 +97,7 @@ def probe_disk(volume: Path) -> dict[str, float]:
             "free_gb": round(usage.free / (1024**3), 1),
         }
     except OSError:
-        return {"total_gb": 0.0, "used_gb": 0.0, "free_gb": 0.0}
+        return {"total_gb": 0.0, "used_gb": 0.0, "free_gb": 0.0, "error": True}
 
 
 def probe_python() -> dict[str, str]:

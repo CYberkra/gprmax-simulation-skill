@@ -15,7 +15,6 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.staticfiles import StaticFiles
 import yaml
 
 from scripts import axes, templates_lib, wizard as wizard_mod

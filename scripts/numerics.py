@@ -199,7 +199,7 @@ def check_window(
 ) -> WindowCheck:
     """Time window must cover two-way travel; sample count must fit it."""
     twt = two_way_travel_s(distance_m, eps_r)
-    ok = window_s > twt
+    ok = window_s >= twt
     note = (
         f"two-way {twt:.3e} s vs window {window_s:.3e} s "
         f"({int(window_s / dt_s)} samples)"
@@ -308,8 +308,9 @@ def numerics_report(
     injected. ``dt_s`` defaults to the CFL limit when not supplied (stated).
     """
     dx, dy, dz = _cell_vector(cells_m)
+    cfl_limit = cfl_dt_s(dx, dy, dz)
     mesh = check_mesh(cells_m, eps_r, max_frequency_hz, minimum_cells)
-    used_dt = dt_s if dt_s is not None else cfl_dt_s(dx, dy, dz)
+    used_dt = dt_s if dt_s is not None else cfl_limit
     cfl = check_cfl(
         dx,
         dy,
@@ -345,7 +346,7 @@ def numerics_report(
         },
         "cfl": {
             "dt_s": used_dt,
-            "limit_s": cfl_dt_s(dx, dy, dz),
+            "limit_s": cfl_limit,
             "explicit_dt": dt_s is not None,
             "ok": cfl.ok,
             "solver_ok": cfl.solver_ok,

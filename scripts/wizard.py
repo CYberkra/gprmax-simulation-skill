@@ -38,6 +38,10 @@ STEPS: tuple[str, ...] = (
 
 _BAND_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*$")
 
+# Stated margin applied when deriving the time window from the two-way travel
+# to the farthest target (window = 2·distance/v · WINDOW_MARGIN).
+WINDOW_MARGIN = 1.5
+
 # Fields that must be answered before a dump is allowed.
 REQUIRED_FIELDS = (
     "scenario_type",
@@ -273,13 +277,8 @@ def answer(session: Session, field: str, value: Any) -> Any:
 
 
 def back(session: Session, steps: int = 1) -> list[str]:
-    """Remove the last *steps* answers (by step order), supporting corrections."""
-    ordered = [
-        field
-        for step in STEPS
-        for field in STEP_FIELDS[step]["fields"]
-        if field in session.answers
-    ]
+    """Remove the last *steps* answers (by answer time), supporting corrections."""
+    ordered = list(session.answers)
     if not ordered:
         raise WizardError("nothing to step back from")
     removed: list[str] = []
@@ -367,7 +366,7 @@ def _numerics_from_answers(session: Session) -> dict[str, Any] | None:
         return None
 
     two_way = numerics.two_way_travel_s(target_distance_m, eps_r)
-    window_s = two_way * 1.5  # stated margin rule
+    window_s = two_way * WINDOW_MARGIN
     pml_layers = session.answers.get("pml_layers")
     try:
         report = numerics.numerics_report(

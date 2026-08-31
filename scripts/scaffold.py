@@ -41,7 +41,7 @@ class ScaffoldError(ValueError):
     """Invalid study name or scaffold target."""
 
 
-_NAME_PATTERN = re.compile(r"^\d{2}_\d{8}_[A-Za-z0-9_]+$")
+_NAME_PATTERN = re.compile(r"^\d{2}_\d{8}_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*$")
 
 
 def validate_study_name(name: str) -> str:

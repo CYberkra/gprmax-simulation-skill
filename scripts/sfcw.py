@@ -381,6 +381,7 @@ def run_chain(
     source_waveform: np.ndarray | None = None,
     band_hz: tuple[float, float] | None = None,
     window: np.ndarray | None = None,
+    window_kind: str = "custom",
     zero_pad_factor: int = 8,
     regularisation: float = 1e-10,
     ramp_k: float = 0.1,
@@ -466,7 +467,7 @@ def run_chain(
     else:
         coefficients = np.ascontiguousarray(np.asarray(window, dtype=np.float64))
         window_metadata = {
-            "kind": "custom",
+            "kind": window_kind,
             "coefficient_count": int(coefficients.size),
             "coefficient_sha256": hashlib.sha256(coefficients.tobytes()).hexdigest(),
         }

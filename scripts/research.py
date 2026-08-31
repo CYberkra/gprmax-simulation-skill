@@ -65,8 +65,17 @@ def identify_research_needs(
     needs: list[ResearchNeed] = []
 
     for field, label in (("medium_material", "围岩介质"), ("target_material", "目标材料")):
-        value = medium.get(field)
-        if not isinstance(value, str) or value.strip().lower() in ("unknown", ""):
+        raw = medium.get(field)
+        if raw is None:
+            needs.append(
+                ResearchNeed(
+                    kind="material",
+                    topic=f"{label}（{field}）",
+                    reason="未提供材料，需调研确立介电/色散参数",
+                    priority="required",
+                )
+            )
+        elif not isinstance(raw, str) or raw.strip().lower() in ("unknown", ""):
             needs.append(
                 ResearchNeed(
                     kind="material",
@@ -75,11 +84,11 @@ def identify_research_needs(
                     priority="required",
                 )
             )
-        elif value not in known_materials:
+        elif raw not in known_materials:
             needs.append(
                 ResearchNeed(
                     kind="material",
-                    topic=f"{label}：{value}",
+                    topic=f"{label}：{raw}",
                     reason=f"本地材料库无该条目（{field}），需调研以入库",
                     priority="required",
                 )

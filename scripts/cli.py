@@ -138,8 +138,10 @@ def _material_index(materials_dir: Path, index_path: Path) -> int:
     materials.write_index(index, index_path)
     invalid = index.get("_invalid")
     if invalid:
+        # Index was still written (invalid entries skipped); report but do
+        # not treat as a failure per the 0/2 exit convention.
         print(f"wrote index with invalid entries: {invalid}", file=sys.stderr)
-        return 1
+        return 0
     print(f"indexed {len(index)} entries -> {index_path}")
     return 0
 
@@ -147,11 +149,7 @@ def _material_index(materials_dir: Path, index_path: Path) -> int:
 def material_override_dir(materials_dir: Path) -> Path:
     """The override directory sits next to the library root."""
     library = Path(materials_dir).resolve()
-    if library.name == "materials":
-        candidate = library.parent / "materials_override"
-    else:
-        candidate = library.parent / "materials_override"
-    return candidate
+    return library.parent / "materials_override"
 
 
 def _preflight(contract_path: Path, project_root: Path) -> int:

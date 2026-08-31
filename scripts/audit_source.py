@@ -162,6 +162,10 @@ def _tones(contract: Mapping[str, Any]) -> np.ndarray:
     tones = np.asarray(raw, dtype=float) if raw is not None else np.asarray([])
     if tones.ndim != 1 or tones.size < 2 or not np.isfinite(tones).all():
         raise ValueError("tones_hz must contain at least two finite values")
+    if np.any(tones <= 0):
+        raise ValueError("tones_hz must be positive")
+    if np.any(np.diff(tones) <= 0):
+        raise ValueError("tones_hz must be strictly increasing")
     return tones
 
 
