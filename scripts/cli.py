@@ -728,9 +728,7 @@ def _dataset_pack(args: argparse.Namespace) -> int:
         done_cases = [case for case in cases if case["case_id"] in done_ids]
         ascan_arrays: list[np.ndarray] = []
         for case in done_cases:
-            output_path = (
-                args.study / "outputs" / case["case_id"]
-            )
+            output_path = batch.outputs_dir(args.study) / case["case_id"]
             out_files = sorted(output_path.glob("*.out"))
             if not out_files:
                 raise batch.BatchError(

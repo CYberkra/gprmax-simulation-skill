@@ -49,6 +49,21 @@ def test_calibrate_throughput_rejects_bad_time():
         numerics.calibrate_throughput((10, 5, 5), (0.05,) * 3, 1e-6, 1e-9, measured_seconds=0)
 
 
+def test_calibrate_throughput_rejects_bad_window_or_dt():
+    # Regression: window_s / dt_s were not validated; NaN or zero could
+    # silently produce a bogus throughput figure.
+    for bad_window in (0.0, -1e-6, float("nan")):
+        with pytest.raises(ValueError):
+            numerics.calibrate_throughput(
+                (10, 5, 5), (0.05,) * 3, bad_window, 1e-9, measured_seconds=10.0
+            )
+    for bad_dt in (0.0, -1e-9, float("nan")):
+        with pytest.raises(ValueError):
+            numerics.calibrate_throughput(
+                (10, 5, 5), (0.05,) * 3, 1e-6, bad_dt, measured_seconds=10.0
+            )
+
+
 # --------------------------------------------------------------------------
 # diagnose
 # --------------------------------------------------------------------------
@@ -107,8 +122,14 @@ def test_sensitivity_most_sensitive_is_eps_or_cell():
     top = sensitivity.rank_most_sensitive(results, top=3)
     assert top
     names = {item.parameter for item in top}
-    # eps_r and dx are physically dominant; at least one should be present
-    assert names & {"eps_r", "dx", "dy", "dz", "dt"}
+    # eps_r moves every propagation-related check (wavelength, window
+    # coverage); dx moves cells-per-wavelength and grid total directly.
+    # The top-3 must contain at least one of them — not merely any of the
+    # five axes.
+    assert "eps_r" in names or "dx" in names
+    assert names.issubset(
+        {"eps_r", "f_hi", "dx", "dy", "dz", "dt", "target_depth", "window"}
+    )
 
 
 def test_sensitivity_render_table():

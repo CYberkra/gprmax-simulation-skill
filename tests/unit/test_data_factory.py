@@ -47,6 +47,12 @@ def test_load_space_rejects_bad_dimension():
         sampling.parse_dimension({"name": "x", "type": "uniform"}, "d")
 
 
+def test_dimension_rejects_empty_name():
+    for bad in ("", "   ", None):
+        with pytest.raises(sampling.SamplingError):
+            sampling.Dimension(name=bad, type="constant", value=1.0)
+
+
 def test_grid_strategy_deterministic(tmp_path: Path):
     space = sampling.load_space(
         _space_yaml(tmp_path, count=3, strategy="grid")
@@ -299,3 +305,13 @@ def test_batch_corrupt_state_raises(tmp_path: Path):
     batch.state_path(tmp_path).write_text("{not json", encoding="utf-8")
     with pytest.raises(batch.BatchError):
         batch.status_dashboard(tmp_path)
+
+
+def test_batch_initialise_reentry_guarded(tmp_path: Path):
+    """Regression: re-initialising a study must not silently discard state."""
+    batch.initialise_batch(tmp_path, _cases(1))
+    with pytest.raises(batch.BatchError):
+        batch.initialise_batch(tmp_path, _cases(2))
+    # explicit force re-creates from scratch
+    batch.initialise_batch(tmp_path, _cases(2), force=True)
+    assert batch.status_dashboard(tmp_path)["total"] == 2

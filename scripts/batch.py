@@ -45,6 +45,15 @@ def batch_dir(study_root: Path) -> Path:
     return Path(study_root) / "batch"
 
 
+def outputs_dir(study_root: Path) -> Path:
+    """Per-case raw ``.out`` outputs live under ``<study>/outputs/``.
+
+    Single source of truth for the output tree so the CLI, dataset packer
+    and any runner script agree on where cases write their evidence.
+    """
+    return Path(study_root) / "outputs"
+
+
 def state_path(study_root: Path) -> Path:
     return batch_dir(study_root) / "state.json"
 
@@ -89,12 +98,24 @@ def _case_id(case: Mapping[str, Any]) -> str:
 
 
 def initialise_batch(
-    study_root: Path, cases: Sequence[Mapping[str, Any]]
+    study_root: Path, cases: Sequence[Mapping[str, Any]], *, force: bool = False
 ) -> Path:
-    """Persist the case list and initialise per-case state."""
+    """Persist the case list and initialise per-case state.
+
+    Re-initialising a study that already has a case list or state is
+    destructive (it overwrites status bookkeeping), so it raises by default;
+    pass ``force=True`` to deliberately re-create the batch from scratch.
+    """
     study_root = Path(study_root)
-    (study_root / "cases.json").parent.mkdir(parents=True, exist_ok=True)
-    (study_root / "cases.json").write_text(
+    cases_file = study_root / "cases.json"
+    state_path_existing = state_path(study_root)
+    if not force and (cases_file.is_file() or state_path_existing.is_file()):
+        raise BatchError(
+            f"{study_root} already has cases.json/state.json — re-initialising "
+            "would discard status bookkeeping; pass force=True to re-create"
+        )
+    cases_file.parent.mkdir(parents=True, exist_ok=True)
+    cases_file.write_text(
         json.dumps(list(cases), indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
@@ -103,7 +124,7 @@ def initialise_batch(
         for case in cases
     }
     save_state(study_root, state)
-    return study_root / "cases.json"
+    return cases_file
 
 
 def mark(study_root: Path, case_id: str, status: str, **extra: Any) -> None:

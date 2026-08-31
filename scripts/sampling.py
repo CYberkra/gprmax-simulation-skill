@@ -48,6 +48,10 @@ class Dimension:
     value: Any = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise SamplingError(
+                f"dimension name must be a non-empty string, got {self.name!r}"
+            )
         if self.type not in VALID_TYPES:
             raise SamplingError(
                 f"dimension {self.name!r}: type must be one of {sorted(VALID_TYPES)}"

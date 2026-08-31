@@ -303,6 +303,10 @@ def calibrate_throughput(
     """
     if not math.isfinite(measured_seconds) or measured_seconds <= 0:
         raise ValueError("measured_seconds must be a positive finite number")
+    if not math.isfinite(window_s) or window_s <= 0:
+        raise ValueError("window_s must be a positive finite number")
+    if not math.isfinite(dt_s) or dt_s <= 0:
+        raise ValueError("dt_s must be a positive finite number")
     total = grid_cells_total(domain_m, cell_m)
     steps = max(1, int(math.ceil(window_s / dt_s)))
     update_ops = total * steps
