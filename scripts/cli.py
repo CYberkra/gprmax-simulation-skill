@@ -38,6 +38,8 @@ import scripts.research as research
 import scripts.templates_lib as templates_lib
 import scripts.visualize as visualize
 import scripts.sampling as sampling
+import scripts.report as report
+import scripts.sketch as sketch
 import scripts.batch as batch
 import scripts.dataset as dataset
 import scripts.diagnose as diagnose
@@ -512,6 +514,22 @@ def _parser() -> argparse.ArgumentParser:
     laudit.add_argument("study_dir", type=Path, help="study directory to audit")
     lhash = lsub.add_parser("hash")
     lhash.add_argument("study_dir", type=Path, help="record SHA-256 of outputs/ into manifest.json")
+
+    rcmd = commands.add_parser("report")
+    rsub = rcmd.add_subparsers(dest="report_command", required=True)
+    mcard = rsub.add_parser("model-card")
+    mcard.add_argument("contract", type=Path, help="simulation_contract.yaml")
+    mcard.add_argument("--out", type=Path, default=Path("model_card.md"))
+    mcard.add_argument("--diagnostics", type=Path, default=None, help="diagnose JSON/artifact")
+    mcard.add_argument("--sensitivity", type=Path, default=None, help="sensitivity JSON/artifact")
+    mcard.add_argument("--chain", type=str, default=None, help="processing chain name")
+    mcard.add_argument("--probe", type=Path, default=None, help="environment probe JSON")
+
+    skcmd = commands.add_parser("sketch")
+    sksub = skcmd.add_subparsers(dest="sketch_command", required=True)
+    gsketch = sksub.add_parser("geometry")
+    gsketch.add_argument("contract", type=Path, help="simulation_contract.yaml")
+    gsketch.add_argument("--out", type=Path, default=Path("geometry_sketch.png"))
     return parser
 
 
@@ -869,6 +887,68 @@ def _layout_hash(study_dir: Path) -> int:
     return 0
 
 
+def _load_optional_json(path: Path | None) -> list | dict | None:
+    if path is None:
+        return None
+    import json as _json
+
+    try:
+        value = _json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, _json.JSONDecodeError) as error:
+        print(f"BLOCK {path} is unreadable JSON ({error})", file=sys.stderr)
+        raise
+    return value
+
+
+def _report_model_card(args: argparse.Namespace) -> int:
+    try:
+        contract = load_contract(args.contract)
+        diagnostics = _load_optional_json(args.diagnostics)
+        sensitivity = _load_optional_json(args.sensitivity)
+        probe = _load_optional_json(args.probe)
+        chain = None
+        if args.chain:
+            chain = visualize.recommend_chain({"chain": args.chain}, contract)
+        text = report.render_model_card(
+            contract,
+            diagnostics=diagnostics if isinstance(diagnostics, list) else None,
+            sensitivity=sensitivity if isinstance(sensitivity, list) else None,
+            chain=chain,
+            probe=probe if isinstance(probe, dict) else None,
+        )
+    except (
+        ContractError,
+        report.SketchError,
+        visualize.ProcessingError,
+        ValueError,
+        OSError,
+        yaml.YAMLError,
+    ) as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(text, encoding="utf-8")
+    print(f"model card -> {args.out}")
+    return 0
+
+
+def _sketch_geometry(args: argparse.Namespace) -> int:
+    try:
+        contract = load_contract(args.contract)
+        path = sketch.plot_geometry_sketch(contract, args.out)
+    except (
+        ContractError,
+        sketch.SketchError,
+        ValueError,
+        OSError,
+        yaml.YAMLError,
+    ) as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
+    print(f"geometry sketch -> {path}")
+    return 0
+
+
 def _sensitivity(args: argparse.Namespace) -> int:
     try:
         contract = load_contract(args.contract)
@@ -985,6 +1065,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.layout_command == "hash":
             return _layout_hash(args.study_dir)
         raise AssertionError(f"unhandled layout command: {args.layout_command}")
+    if args.command == "report":
+        if args.report_command == "model-card":
+            return _report_model_card(args)
+        raise AssertionError(f"unhandled report command: {args.report_command}")
+    if args.command == "sketch":
+        if args.sketch_command == "geometry":
+            return _sketch_geometry(args)
+        raise AssertionError(f"unhandled sketch command: {args.sketch_command}")
     raise AssertionError(f"unhandled command: {args.command}")
 
 

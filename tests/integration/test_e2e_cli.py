@@ -177,3 +177,79 @@ def test_e2e_dataset_flow(tmp_path: Path):
     rc = main(["dataset", "sample", str(space), "--study", str(study), "--force"])
     assert rc == 0, f"dataset sample --force failed: {rc}"
     assert (study / "cases.json").is_file()
+
+
+def test_e2e_report_model_card_and_sketch(tmp_path: Path):
+    """report model-card and sketch geometry run end-to-end on a contract."""
+    contract_path = tmp_path / "contract.yaml"
+    contract_path.write_text(
+        yaml.safe_dump(
+            {
+                "project": {"target_depth_m": 80.0, "target_size_m": 4.0},
+                "model": {"dimension": "3d"},
+                "task": {"objective": "tunnel", "claim_scope": "numerical"},
+                "medium": {
+                    "target_material": "WET",
+                    "medium_material": "coal",
+                    "model_type": "debye",
+                    "parameter_source": "literature",
+                },
+                "waveform": {
+                    "excitation_mode": "unit_impulse",
+                    "measurement_mode": "sfcw_equivalent",
+                    "processing_route": "impulse_lti",
+                    "band_mhz": "30-240",
+                },
+                "numerics": {"precision_requirement": "fp32", "pml_layers": 20},
+                "geometry": {
+                    "target_level": "L3",
+                    "antenna": "ideal_hertzian",
+                    "noise": "none",
+                },
+                "acceptance": {"negative_controls": [], "sensitivity_tests": []},
+                "evidence": {"required_outputs": ["rxs/rx1/Ez"], "provenance_level": "strict"},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    # 1. report model-card
+    card_path = tmp_path / "model_card.md"
+    rc = main(
+        ["report", "model-card", str(contract_path), "--out", str(card_path), "--chain", "advanced"]
+    )
+    assert rc == 0, f"report model-card failed: {rc}"
+    assert card_path.is_file()
+    card_text = card_path.read_text(encoding="utf-8")
+    assert "## 任务与声明" in card_text
+    assert "## 处理链" in card_text
+
+    # 2. sketch geometry
+    png_path = tmp_path / "sketch.png"
+    rc = main(["sketch", "geometry", str(contract_path), "--out", str(png_path)])
+    assert rc == 0, f"sketch geometry failed: {rc}"
+    assert png_path.is_file()
+    assert png_path.stat().st_size > 5000
+
+    # 3. missing target depth blocks the sketch
+    bad_path = tmp_path / "bad.yaml"
+    bad_path.write_text(
+        yaml.safe_dump(
+            {
+                "task": {"objective": "tunnel", "claim_scope": "numerical"},
+                "medium": {"model_type": "nondispersive", "parameter_source": "assumed"},
+                "waveform": {
+                    "excitation_mode": "pulse_broadband",
+                    "measurement_mode": "time_domain",
+                },
+                "numerics": {"precision_requirement": "auto"},
+                "acceptance": {"negative_controls": [], "sensitivity_tests": []},
+                "evidence": {"required_outputs": [], "provenance_level": "strict"},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    rc = main(["sketch", "geometry", str(bad_path), "--out", str(tmp_path / "bad.png")])
+    assert rc == 2, "sketch without target depth must block"
