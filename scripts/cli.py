@@ -30,6 +30,9 @@ from scripts.scaffold import describe_layout, create_study_skeleton
 import scripts.research as research
 import scripts.templates_lib as templates_lib
 import scripts.visualize as visualize
+import scripts.sampling as sampling
+import scripts.batch as batch
+import scripts.dataset as dataset
 
 
 def build_core_registry() -> GateRegistry:
@@ -444,6 +447,26 @@ def _parser() -> argparse.ArgumentParser:
     sprocess.add_argument("--output-dir", type=Path, default=Path("results"))
     sprocess.add_argument("--zero-pad", type=int, default=8)
     sprocess.add_argument("--regularisation", type=float, default=1e-10)
+
+    dcmd = commands.add_parser("dataset")
+    dsub = dcmd.add_subparsers(dest="dataset_command", required=True)
+    dsample = dsub.add_parser("sample")
+    dsample.add_argument("space", type=Path, help="sampling space YAML")
+    dsample.add_argument("--study", type=Path, default=Path("study"))
+    dsample.add_argument("--count", type=int, default=None, help="override count")
+    dsample.add_argument("--strategy", choices=("random", "grid"), default=None)
+    dsample.add_argument("--seed", type=int, default=None)
+    dstatus = dsub.add_parser("status")
+    dstatus.add_argument("--study", type=Path, default=Path("study"))
+    dsummary = dsub.add_parser("summary")
+    dsummary.add_argument("--study", type=Path, default=Path("study"))
+    dpack = dsub.add_parser("pack")
+    dpack.add_argument("--study", type=Path, default=Path("study"))
+    dpack.add_argument("--out", type=Path, default=Path("dataset.h5"))
+    dpack.add_argument("--backend", choices=("h5", "npz"), default="h5")
+    dpack.add_argument("--band", default="30-240", help="tone band <lo>-<hi> MHz for processing")
+    dpack.add_argument("--df-mhz", type=float, default=1.0)
+    dpack.add_argument("--mode", choices=("impulse_lti", "broadband_deconvolution"), default="impulse_lti")
     return parser
 
 
@@ -624,6 +647,113 @@ def _sfcw_process(args: argparse.Namespace) -> int:
     return 0
 
 
+def _dataset_sample(args: argparse.Namespace) -> int:
+    from dataclasses import replace
+
+    try:
+        space = sampling.load_space(args.space)
+        if args.count is not None:
+            space = replace(space, count=args.count)
+        if args.strategy:
+            space = replace(space, strategy=args.strategy)
+        if args.seed is not None:
+            space = replace(space, seed=args.seed)
+        cases = sampling.sample_cases(space)
+        cases_path = batch.initialise_batch(args.study, cases)
+    except (sampling.SamplingError, batch.BatchError) as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
+    print(sampling.render_space(space))
+    print(f"sampled {len(cases)} cases -> {cases_path}")
+    return 0
+
+
+def _dataset_status(args: argparse.Namespace) -> int:
+    try:
+        dashboard = batch.status_dashboard(args.study)
+    except (batch.BatchError, OSError) as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
+    import json as _json
+
+    print(_json.dumps(dashboard, indent=2, ensure_ascii=False))
+    return 0
+
+
+def _dataset_summary(args: argparse.Namespace) -> int:
+    try:
+        cases = sampling.load_case_list(args.study / "cases.json")
+        path = batch.write_summary(args.study, cases)
+    except (sampling.SamplingError, batch.BatchError, OSError) as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
+    print(f"summary -> {path}")
+    return 0
+
+
+def _dataset_pack(args: argparse.Namespace) -> int:
+    try:
+        cases = sampling.load_case_list(args.study / "cases.json")
+        state = batch.load_state(args.study)
+        done_ids = [
+            case["case_id"]
+            for case in cases
+            if state.get(case["case_id"], {}).get("status") == "done"
+        ]
+        if not done_ids:
+            raise batch.BatchError("no completed cases to pack")
+
+        f_lo, f_hi = (float(part) for part in str(args.band).split("-"))
+        frequencies_mhz = [
+            f_lo + i * args.df_mhz
+            for i in range(int(round((f_hi - f_lo) / args.df_mhz)) + 1)
+        ]
+        done_cases = [case for case in cases if case["case_id"] in done_ids]
+        ascan_arrays: list[np.ndarray] = []
+        for case in done_cases:
+            output_path = (
+                args.study / "outputs" / case["case_id"]
+            )
+            out_files = sorted(output_path.glob("*.out"))
+            if not out_files:
+                raise batch.BatchError(
+                    f"case {case['case_id']} has no .out under {output_path}"
+                )
+            trace, trace_dt = visualize.read_ez_from_out(out_files[0])
+            # In the data-factory LTI pipeline each case's .out is the
+            # impulse response h[n]; impulse_lti synthesizes the SFCW
+            # response from it. broadband_deconvolution would instead need
+            # the source waveform as a separate input.
+            result = visualize.process_trace(
+                args.mode,
+                trace[0],
+                dt_s=trace_dt,
+                frequencies_mhz=frequencies_mhz,
+                impulse_response=trace[0] if args.mode == "impulse_lti" else None,
+            )
+            ascan_arrays.append(np.asarray(result["envelope"], dtype=np.float64))
+
+        path = dataset.pack_dataset(
+            args.out,
+            cases=done_cases,
+            arrays={"ascan": ascan_arrays},
+            backend=args.backend,
+        )
+    except (
+        sampling.SamplingError,
+        batch.BatchError,
+        dataset.DatasetError,
+        visualize.ProcessingError,
+        ValueError,
+        OSError,
+    ) as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
+    print(f"packed {len(done_ids)} cases -> {path}")
+    print(f"info: {dataset.dataset_info(path)}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "init":
@@ -700,6 +830,16 @@ def main(argv: list[str] | None = None) -> int:
         if args.sfcw_command == "process":
             return _sfcw_process(args)
         raise AssertionError(f"unhandled sfcw command: {args.sfcw_command}")
+    if args.command == "dataset":
+        if args.dataset_command == "sample":
+            return _dataset_sample(args)
+        if args.dataset_command == "status":
+            return _dataset_status(args)
+        if args.dataset_command == "summary":
+            return _dataset_summary(args)
+        if args.dataset_command == "pack":
+            return _dataset_pack(args)
+        raise AssertionError(f"unhandled dataset command: {args.dataset_command}")
     raise AssertionError(f"unhandled command: {args.command}")
 
 
