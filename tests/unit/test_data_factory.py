@@ -172,3 +172,130 @@ def test_labels_categorical_encoding():
     assert labels[0, 0] != labels[1, 0]
     assert labels[0, 1] == 70.0
     assert labels[2, 1] == 90.0
+
+
+def test_pack_array_supports_2d_bscan(tmp_path: Path):
+    """Regression: B-scan (2-D) per-case arrays must pack without crashing."""
+    cases = _cases(2)
+    # two B-scans with 3 traces × different time lengths
+    arrays = {
+        "bscan": [
+            np.arange(3 * 10, dtype=float).reshape(3, 10),
+            np.arange(3 * 8, dtype=float).reshape(3, 8),
+        ]
+    }
+    path = dataset.pack_dataset(
+        tmp_path / "bs.h5", cases=cases, arrays=arrays, backend="h5"
+    )
+    info = dataset.dataset_info(path)
+    assert info["n_samples"] == 2
+    import h5py
+
+    with h5py.File(path, "r") as handle:
+        assert handle["x_bscan"].shape == (2, 3, 10)  # padded last axis
+        assert list(handle["len_bscan"][...]) == [10, 8]
+
+
+def test_pack_array_rejects_scalar(tmp_path: Path):
+    """Regression: 0-D input must raise DatasetError, not crash with IndexError."""
+    cases = _cases(1)
+    with pytest.raises(dataset.DatasetError):
+        dataset.pack_dataset(
+            tmp_path / "x.h5",
+            cases=cases,
+            arrays={"ascan": [np.float64(42.0)]},
+            backend="h5",
+        )
+
+
+def test_pack_array_rejects_mismatched_ndim(tmp_path: Path):
+    cases = _cases(2)
+    with pytest.raises(dataset.DatasetError):
+        dataset.pack_dataset(
+            tmp_path / "x.h5",
+            cases=cases,
+            arrays={"a": [np.zeros((3, 10)), np.zeros((2, 4, 5))]},
+            backend="h5",
+        )
+
+
+def test_labels_none_does_not_shift_categorical_index():
+    """Regression: a None in a column must not occupy a categorical index."""
+    cases_with_none = [
+        {"case_id": "0", "mat": "WET", "depth": 70.0},
+        {"case_id": "1", "mat": None, "depth": 80.0},
+        {"case_id": "2", "mat": "AIR", "depth": 90.0},
+    ]
+    cases_clean = [
+        {"case_id": "0", "mat": "WET", "depth": 70.0},
+        {"case_id": "1", "mat": "AIR", "depth": 80.0},
+    ]
+    labels_none = dataset.labels_matrix(cases_with_none, ["mat", "depth"])
+    labels_clean = dataset.labels_matrix(cases_clean, ["mat", "depth"])
+    # WET and AIR indices must be identical whether or not None is present
+    assert labels_none[0, 0] == labels_clean[0, 0]
+    assert labels_none[2, 0] == labels_clean[1, 0]
+    # None maps to NaN
+    assert np.isnan(labels_none[1, 0])
+
+
+# --------------------------------------------------------------------------
+# sampling negative paths
+# --------------------------------------------------------------------------
+
+def test_load_space_rejects_null_count(tmp_path: Path):
+    space = _space_yaml(tmp_path)
+    payload = yaml.safe_load(space.read_text(encoding="utf-8"))
+    payload["count"] = None
+    space.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    with pytest.raises(sampling.SamplingError):
+        sampling.load_space(space)
+
+
+def test_load_space_rejects_float_count(tmp_path: Path):
+    space = _space_yaml(tmp_path, count=3.14)
+    with pytest.raises(sampling.SamplingError):
+        sampling.load_space(space)
+
+
+def test_load_space_rejects_null_seed(tmp_path: Path):
+    space = _space_yaml(tmp_path)
+    payload = yaml.safe_load(space.read_text(encoding="utf-8"))
+    payload["seed"] = None
+    space.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    with pytest.raises(sampling.SamplingError):
+        sampling.load_space(space)
+
+
+# --------------------------------------------------------------------------
+# batch negative paths
+# --------------------------------------------------------------------------
+
+def test_batch_rejects_illegal_transition(tmp_path: Path):
+    batch.initialise_batch(tmp_path, _cases(1))
+    batch.mark(tmp_path, "00000", "done", output="o.out")
+    with pytest.raises(batch.BatchError):
+        batch.mark(tmp_path, "00000", "pending")  # done -> pending is illegal
+
+
+def test_batch_reset_allows_rerun(tmp_path: Path):
+    batch.initialise_batch(tmp_path, _cases(1))
+    batch.mark(tmp_path, "00000", "fail", error="boom")
+    batch.reset(tmp_path, "00000")
+    assert batch.pending_cases(tmp_path) == ["00000"]
+    batch.mark(tmp_path, "00000", "done", output="o2.out")
+
+
+def test_batch_missing_state_raises(tmp_path: Path):
+    """Regression: deleting state.json after init must raise, not report empty."""
+    batch.initialise_batch(tmp_path, _cases(2))
+    batch.state_path(tmp_path).unlink()
+    with pytest.raises(batch.BatchError):
+        batch.status_dashboard(tmp_path)
+
+
+def test_batch_corrupt_state_raises(tmp_path: Path):
+    batch.initialise_batch(tmp_path, _cases(1))
+    batch.state_path(tmp_path).write_text("{not json", encoding="utf-8")
+    with pytest.raises(batch.BatchError):
+        batch.status_dashboard(tmp_path)

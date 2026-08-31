@@ -123,3 +123,67 @@ def test_sensitivity_custom_checks():
         _contract(), checks=("cells_per_wavelength",)
     )
     assert all(r.check == "cells_per_wavelength" for r in results)
+
+
+# --------------------------------------------------------------------------
+# negative paths (fail-closed regressions)
+# --------------------------------------------------------------------------
+
+def test_diagnose_handles_string_exponents(tmp_path: Path):
+    """Regression: PyYAML parses 2e-6 as str; must still be diagnosed as OK."""
+    contract = _contract()
+    contract["numerics"]["time_window_s"] = "2e-6"
+    contract["numerics"]["dt_s"] = "5e-11"
+    findings = diagnose.diagnose_model(contract)
+    assert findings
+    assert all(f.severity != "BLOCK" for f in findings)
+
+
+def test_diagnose_pml_below_default_warns():
+    contract = _contract()
+    contract["numerics"]["pml_layers"] = 3
+    findings = diagnose.diagnose_model(contract)
+    pml = next(f for f in findings if f.check == "pml")
+    assert pml.severity == "WARN"
+
+
+def test_diagnose_vram_respects_precision():
+    # fp32 declared: fp64 estimate may exceed GPU, but fp32 must not BLOCK.
+    contract = _contract()
+    contract["numerics"]["precision_requirement"] = "fp32"
+    findings = diagnose.diagnose_model(contract, gpu_vram_gb=1.5)
+    vram = next(f for f in findings if f.check == "vram")
+    assert vram.severity != "BLOCK"
+
+
+def test_diagnose_vram_blocks_on_fp64():
+    contract = _contract()
+    contract["numerics"]["precision_requirement"] = "float64"
+    findings = diagnose.diagnose_model(contract, gpu_vram_gb=1.5)
+    vram = next(f for f in findings if f.check == "vram")
+    assert vram.severity == "BLOCK"
+
+
+def test_diagnose_waveform_not_mapping_does_not_crash():
+    findings = diagnose.diagnose_model(_contract(waveform=None))
+    assert findings  # returns warnings, no crash
+
+
+def test_sensitivity_requires_fields():
+    with pytest.raises(ValueError):
+        sensitivity.analyse_sensitivity(_contract(medium={}))
+    with pytest.raises(ValueError):
+        sensitivity.analyse_sensitivity(_contract(waveform={"band_mhz": "bad"}))
+    with pytest.raises(ValueError):
+        sensitivity.analyse_sensitivity(_contract(domain_m=None))
+
+
+def test_sensitivity_uses_contract_domain():
+    contract = _contract(domain_m=[100.0, 20.0, 8.0])
+    results = sensitivity.analyse_sensitivity(contract, checks=("vram_fp64_gb",))
+    # VRAM should scale with the larger domain; no hard-coded (60,16,7).
+    big = sensitivity.analyse_sensitivity(_contract(domain_m=[100.0, 20.0, 8.0]))
+    small = sensitivity.analyse_sensitivity(_contract(domain_m=[30.0, 8.0, 4.0]))
+    big_vram = next(r for r in big if r.check == "vram_fp64_gb")
+    small_vram = next(r for r in small if r.check == "vram_fp64_gb")
+    assert big_vram.base_metric > small_vram.base_metric

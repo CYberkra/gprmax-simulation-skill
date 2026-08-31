@@ -129,10 +129,25 @@ def load_space(path: Path) -> SamplingSpace:
         parse_dimension(item, f"{path}.dimensions[{i}]")
         for i, item in enumerate(dimensions_raw)
     )
+    count_raw = raw.get("count", 100)
+    if count_raw is None:
+        raise SamplingError(f"{path}: 'count' must not be null")
+    if isinstance(count_raw, float):
+        raise SamplingError(
+            f"{path}: 'count' must be an integer, got float {count_raw}"
+        )
+    seed_raw = raw.get("seed", 0)
+    if seed_raw is None:
+        raise SamplingError(f"{path}: 'seed' must not be null")
+    try:
+        count = int(count_raw)
+        seed = int(seed_raw)
+    except (TypeError, ValueError) as error:
+        raise SamplingError(f"{path}: invalid count or seed value ({error})") from error
     return SamplingSpace(
-        count=int(raw.get("count", 100)),
+        count=count,
         strategy=str(raw.get("strategy", "random")),
-        seed=int(raw.get("seed", 0)),
+        seed=seed,
         dimensions=dimensions,
     )
 

@@ -1,14 +1,17 @@
 """Parameter sensitivity analysis for a model plan.
 
-For each key parameter (permittivity, conductivity, cell size, PML layers,
-time window), perturb it by ±perturbation (default 20%) and re-evaluate the
-numerical checks that matter (cells/λ, CFL margin, window coverage, VRAM).
-The output is a sensitivity ranking: which parameter's perturbation moves a
-check the most.
+For each key parameter (permittivity, cell sizes, time step, band edge,
+target depth, time window, domain), perturb it by ±perturbation (default
+20%) and re-evaluate the numerical checks that matter (cells/λ, CFL margin,
+window coverage, VRAM). The output is a sensitivity ranking: which
+parameter's perturbation moves a check the most.
 
 This is a *cheap analytical* sensitivity — it does not run gprMax. It tells
 the user which declared parameters are the most consequential to re-verify,
 guiding where measurement or model detail matters most.
+
+Fail-closed: unlike a silent-defaults approach, missing key fields raise
+``ValueError`` so the caller knows the analysis is not meaningful.
 """
 
 from __future__ import annotations
@@ -47,19 +50,36 @@ def _mapping(value: Any, name: str) -> Mapping[str, Any]:
     return value
 
 
-def _metric_for(check: str, contract: Mapping[str, Any], base: dict[str, float]) -> float:
+def _required_float(cfg: Mapping[str, Any], key: str, name: str) -> float:
+    """A required numeric field; missing/None raises rather than defaults.
+
+    Coerces numeric-looking strings (PyYAML parses ``5e-11`` as a string).
+    """
+    value = cfg.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ValueError(f"{name} is required for sensitivity analysis")
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            raise ValueError(f"{name} must be numeric, got {value!r}") from None
+    return float(value)
+
+
+def _metric_for(check: str, base: dict[str, float]) -> float:
     """Return the numeric value of one check for the current parameter set."""
-    eps_r = base.get("eps_r", 4.0)
-    f_hi = base.get("f_hi", 200e6)
-    dx = base.get("dx", 0.05)
-    dy = base.get("dy", 0.05)
-    dz = base.get("dz", 0.05)
-    dt = base.get("dt", numerics.cfl_dt_s(dx, dy, dz))
-    target_depth = base.get("target_depth", 60.0)
-    window = base.get("window", 1e-6)
+    eps_r = base["eps_r"]
+    f_hi = base["f_hi"]
+    dx = base["dx"]
+    dy = base["dy"]
+    dz = base["dz"]
+    dt = base["dt"]
+    target_depth = base["target_depth"]
+    window = base["window"]
 
     if check == "cells_per_wavelength":
-        return numerics.check_mesh((dx, dy, dz), eps_r, f_hi).cells_per_wavelength["Nx"]
+        mesh = numerics.check_mesh((dx, dy, dz), eps_r, f_hi)
+        return min(mesh.cells_per_wavelength.values())
     if check == "cfl_fraction":
         limit = numerics.cfl_dt_s(dx, dy, dz)
         return dt / limit
@@ -67,9 +87,8 @@ def _metric_for(check: str, contract: Mapping[str, Any], base: dict[str, float])
         twt = numerics.two_way_travel_s(target_depth, eps_r)
         return window / twt
     if check == "vram_fp64_gb":
-        resource = numerics.estimate_resources(
-            (base.get("domain_x", 60.0), 16.0, 7.0), (dx, dy, dz), window, dt
-        )
+        domain = (base["domain_x"], base["domain_y"], base["domain_z"])
+        resource = numerics.estimate_resources(domain, (dx, dy, dz), window, dt)
         return resource.vram_gb_fp64
     raise ValueError(f"unknown check: {check}")
 
@@ -92,41 +111,57 @@ def analyse_sensitivity(
 
     ``parameters`` defaults to the keys present in the plan; ``checks``
     defaults to the four standard checks. Returns a list sorted by the most
-    sensitive parameter first.
+    sensitive parameter first. Missing key fields raise ``ValueError``.
     """
     medium = _mapping(contract.get("medium"), "contract.medium")
     numerics_cfg = _mapping(contract.get("numerics"), "contract.numerics")
     project = contract.get("project") or {}
     project = _mapping(project, "contract.project")
-    waveform = contract.get("waveform") or {}
-    waveform = _mapping(waveform, "contract.waveform")
+    waveform = _mapping(contract.get("waveform"), "contract.waveform")
 
-    eps_r = medium.get("eps_r", 4.0)
+    eps_r = _required_float(medium, "eps_r", "medium.eps_r")
     band = waveform.get("band_mhz")
-    f_hi = 200e6
-    if isinstance(band, str) and "-" in band:
-        try:
-            f_hi = float(band.split("-")[1]) * 1e6
-        except ValueError:
-            f_hi = 200e6
+    if not isinstance(band, str) or "-" not in band:
+        raise ValueError("waveform.band_mhz is required as '<lo>-<hi>' MHz")
+    band_parts = [float(part) for part in band.split("-")]
+    if len(band_parts) != 2 or not (0 < band_parts[0] < band_parts[1]):
+        raise ValueError(f"waveform.band_mhz must be '<lo>-<hi>' with 0 < lo < hi")
+    f_hi = band_parts[1] * 1e6
 
-    dx = numerics_cfg.get("dx_m", 0.05)
-    dy = numerics_cfg.get("dy_m", dx)
-    dz = numerics_cfg.get("dz_m", dx)
-    dt = numerics_cfg.get("dt_s", numerics.cfl_dt_s(dx, dy, dz))
+    dx = _required_float(numerics_cfg, "dx_m", "numerics.dx_m")
+    dy = _required_float(numerics_cfg, "dy_m", "numerics.dy_m") if "dy_m" in numerics_cfg else dx
+    dz = _required_float(numerics_cfg, "dz_m", "numerics.dz_m") if "dz_m" in numerics_cfg else dx
+    dt = (
+        _required_float(numerics_cfg, "dt_s", "numerics.dt_s")
+        if "dt_s" in numerics_cfg
+        else numerics.cfl_dt_s(dx, dy, dz)
+    )
+    window = (
+        _required_float(numerics_cfg, "time_window_s", "numerics.time_window_s")
+        if "time_window_s" in numerics_cfg
+        else 1e-6
+    )
+    target_depth = _required_float(project, "target_depth_m", "project.target_depth_m")
+
     domain = contract.get("domain_m")
-    domain_x = domain[0] if isinstance(domain, (list, tuple)) and len(domain) >= 1 else 60.0
+    if not isinstance(domain, (list, tuple)) or len(domain) != 3 or not all(
+        isinstance(v, (int, float)) and v > 0 for v in domain
+    ):
+        raise ValueError("domain_m must be [x, y, z] with positive dimensions")
+    domain_x, domain_y, domain_z = (float(v) for v in domain)
 
     base: dict[str, float] = {
-        "eps_r": float(eps_r),
-        "f_hi": float(f_hi),
-        "dx": float(dx),
-        "dy": float(dy),
-        "dz": float(dz),
-        "dt": float(dt),
-        "target_depth": float(project.get("target_depth_m", 60.0)),
-        "window": float(numerics_cfg.get("time_window_s", 1e-6)),
-        "domain_x": float(domain_x),
+        "eps_r": eps_r,
+        "f_hi": f_hi,
+        "dx": dx,
+        "dy": dy,
+        "dz": dz,
+        "dt": dt,
+        "target_depth": target_depth,
+        "window": window,
+        "domain_x": domain_x,
+        "domain_y": domain_y,
+        "domain_z": domain_z,
     }
 
     if parameters is None:
@@ -140,10 +175,10 @@ def analyse_sensitivity(
             continue
         for check in checks:
             try:
-                base_metric = _metric_for(check, contract, base)
+                base_metric = _metric_for(check, base)
                 for factor in (1.0 - perturbation, 1.0 + perturbation):
                     perturbed = _perturb(base, parameter, factor)
-                    perturbed_metric = _metric_for(check, contract, perturbed)
+                    perturbed_metric = _metric_for(check, perturbed)
                     if abs(base_metric) < 1e-12:
                         continue
                     relative = abs(perturbed_metric - base_metric) / abs(base_metric)

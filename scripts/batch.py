@@ -28,6 +28,14 @@ from scripts.sampling import SamplingError, load_case_list
 
 VALID_STATUSES = {"pending", "running", "done", "fail"}
 
+# Legal status transitions (guards against accidental regression).
+_TRANSITIONS: dict[str, set[str]] = {
+    "pending": {"running", "done", "fail"},
+    "running": {"done", "fail", "pending"},
+    "done": set(),
+    "fail": set(),  # re-run via reset(), not direct transition
+}
+
 
 class BatchError(ValueError):
     """Invalid batch state or orchestration call."""
@@ -46,14 +54,23 @@ def summary_path(study_root: Path) -> Path:
 
 
 def load_state(study_root: Path) -> dict[str, dict[str, Any]]:
-    """Load per-case status; missing cases default to pending."""
+    """Load per-case status; raise if the batch was initialised but state is lost."""
     path = state_path(study_root)
-    state: dict[str, dict[str, Any]] = {}
-    if path.is_file():
+    if not path.is_file():
+        cases_file = Path(study_root) / "cases.json"
+        if cases_file.is_file():
+            raise BatchError(
+                f"state file {path} missing although cases.json exists — "
+                "batch state lost; reinitialise or restore the state file"
+            )
+        return {}
+    try:
         value = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(value, dict):
-            state = dict(value)
-    return state
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise BatchError(f"state file {path} is unreadable JSON ({error})") from error
+    if isinstance(value, dict):
+        return dict(value)
+    raise BatchError(f"state file {path} must contain a JSON object")
 
 
 def save_state(study_root: Path, state: Mapping[str, Mapping[str, Any]]) -> None:
@@ -90,16 +107,40 @@ def initialise_batch(
 
 
 def mark(study_root: Path, case_id: str, status: str, **extra: Any) -> None:
-    """Transition one case to a new status (persisted)."""
+    """Transition one case to a new status (persisted).
+
+    Legal transitions guard against accidental regression (for example a done
+    case being silently re-marked). ``fail`` may be re-run explicitly via
+    ``reset``, not by direct transition.
+    """
     if status not in VALID_STATUSES:
         raise BatchError(f"invalid status: {status}")
     state = load_state(study_root)
     if case_id not in state:
         raise BatchError(f"unknown case_id: {case_id}")
+    current = state[case_id].get("status", "pending")
+    allowed = _TRANSITIONS.get(current, set())
+    if status not in allowed:
+        raise BatchError(
+            f"illegal state transition {current} -> {status} for {case_id} "
+            f"(allowed: {sorted(allowed)})"
+        )
     entry = dict(state[case_id])
     entry["status"] = status
     entry.update(extra)
     state[case_id] = entry
+    save_state(study_root, state)
+
+
+def reset(study_root: Path, case_id: str) -> None:
+    """Reset a failed case back to pending so it can be re-run."""
+    state = load_state(study_root)
+    if case_id not in state:
+        raise BatchError(f"unknown case_id: {case_id}")
+    current = state[case_id].get("status", "pending")
+    if current not in ("fail", "running"):
+        raise BatchError(f"reset only applies to fail/running, got {current}")
+    state[case_id] = {"status": "pending", "output": None, "error": None}
     save_state(study_root, state)
 
 

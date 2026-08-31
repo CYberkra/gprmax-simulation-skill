@@ -466,7 +466,7 @@ def _parser() -> argparse.ArgumentParser:
     dpack.add_argument("--study", type=Path, default=Path("study"))
     dpack.add_argument("--out", type=Path, default=Path("dataset.h5"))
     dpack.add_argument("--backend", choices=("h5", "npz"), default="h5")
-    dpack.add_argument("--band", default="30-240", help="tone band <lo>-<hi> MHz for processing")
+    dpack.add_argument("--band", required=True, help="tone band <lo>-<hi> MHz, e.g. 30-240")
     dpack.add_argument("--df-mhz", type=float, default=1.0)
     dpack.add_argument("--mode", choices=("impulse_lti", "broadband_deconvolution"), default="impulse_lti")
 
@@ -713,7 +713,14 @@ def _dataset_pack(args: argparse.Namespace) -> int:
         if not done_ids:
             raise batch.BatchError("no completed cases to pack")
 
-        f_lo, f_hi = (float(part) for part in str(args.band).split("-"))
+        band_parts = [float(part) for part in str(args.band).split("-")]
+        if len(band_parts) != 2:
+            raise ValueError("--band must be '<lo>-<hi>' MHz")
+        f_lo, f_hi = band_parts
+        if not (0 < f_lo < f_hi):
+            raise ValueError("--band must satisfy 0 < lo < hi")
+        if args.df_mhz <= 0:
+            raise ValueError("--df-mhz must be positive")
         frequencies_mhz = [
             f_lo + i * args.df_mhz
             for i in range(int(round((f_hi - f_lo) / args.df_mhz)) + 1)

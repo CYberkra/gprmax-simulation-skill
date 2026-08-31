@@ -7,8 +7,9 @@ cells/λ gate, PML clearance too thin, and tones above Nyquist. This turns
 runtime errors into setup-time warnings.
 
 Every check reuses the same physics in ``numerics.py``; nothing here invents
-a second set of formulas. The result is a list of diagnostics, each with a
-severity (``BLOCK`` / ``WARN`` / ``OK``) and a human-readable message.
+a second set of formulas. Missing optional inputs yield ``WARN``
+diagnostics rather than a crash, and each independent check still runs so
+one missing field does not hide the others.
 """
 
 from __future__ import annotations
@@ -17,6 +18,9 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from scripts import numerics
+
+# gprMax default PML depth (layers). Below this, absorption is weak.
+PML_DEFAULT_LAYERS = 10
 
 
 @dataclass(frozen=True)
@@ -35,14 +39,13 @@ def _mapping(value: Any, name: str) -> Mapping[str, Any]:
     return value
 
 
-def _as_float(cfg: Mapping[str, Any], key: str) -> float | None:
-    """Coerce a numerics value to float, handling YAML's string-exponent gotcha.
+def _coerce_float(value: Any) -> float | None:
+    """Coerce a value to float, handling YAML's string-exponent gotcha.
 
     PyYAML (YAML 1.1) parses ``2e-6`` as a string because its float resolver
     requires a decimal point; only ``2.0e-6`` becomes a float. This helper
     converts such numeric-looking strings defensively.
     """
-    value = cfg.get(key)
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         return None
     if isinstance(value, str):
@@ -51,6 +54,19 @@ def _as_float(cfg: Mapping[str, Any], key: str) -> float | None:
         except ValueError:
             return None
     return float(value)
+
+
+def _parse_band_mhz(band: Any) -> tuple[float | None, str | None]:
+    """Parse a ``'<lo>-<hi>'`` MHz band; returns (f_hi_hz, warn_message)."""
+    if not isinstance(band, str) or "-" not in band:
+        return None, "waveform.band_mhz missing or not '<lo>-<hi>' MHz"
+    parts = [float(part) for part in band.split("-")]
+    if len(parts) != 2:
+        return None, "waveform.band_mhz must be '<lo>-<hi>' MHz"
+    lo, hi = parts
+    if not (0 < lo < hi):
+        return None, f"waveform.band_mhz must satisfy 0 < lo < hi, got {band!r}"
+    return hi * 1e6, None
 
 
 def diagnose_model(
@@ -71,67 +87,64 @@ def diagnose_model(
     numerics_cfg = _mapping(contract.get("numerics"), "contract.numerics")
     project = contract.get("project") or {}
     project = _mapping(project, "contract.project")
+    try:
+        waveform = _mapping(contract.get("waveform"), "contract.waveform")
+    except ValueError:
+        waveform = {}
 
-    eps_r = medium.get("eps_r")
-    if not isinstance(eps_r, (int, float)) or eps_r <= 0:
+    eps_r = _coerce_float(medium.get("eps_r"))
+    f_hi, band_warn = _parse_band_mhz(waveform.get("band_mhz"))
+    dx = _coerce_float(numerics_cfg.get("dx_m"))
+    dy = _coerce_float(numerics_cfg.get("dy_m")) or dx
+    dz = _coerce_float(numerics_cfg.get("dz_m")) or dx
+    dt = _coerce_float(numerics_cfg.get("dt_s"))
+    window = _coerce_float(numerics_cfg.get("time_window_s"))
+    pml = _coerce_float(numerics_cfg.get("pml_layers"))
+    target_depth = _coerce_float(project.get("target_depth_m"))
+    domain = contract.get("domain_m")
+    precision = numerics_cfg.get("precision_requirement")
+
+    # Material / band gates (needed by several checks below).
+    if band_warn:
+        findings.append(Diagnosis("band", "WARN", band_warn))
+    if eps_r is None or eps_r <= 0:
         findings.append(
-            Diagnosis("material", "WARN", "medium.eps_r missing — cannot verify mesh resolution")
+            Diagnosis("material", "WARN", "medium.eps_r missing — mesh/window checks skipped")
         )
-        return findings
-
-    band = contract.get("waveform", {}).get("band_mhz")
-    f_hi = None
-    if isinstance(band, str) and "-" in band:
-        try:
-            f_hi = float(band.split("-")[1]) * 1e6
-        except ValueError:
-            f_hi = None
-    if f_hi is None:
+    if dx is None or dx <= 0:
         findings.append(
-            Diagnosis("band", "WARN", "waveform.band_mhz missing — cannot verify Nyquist / mesh")
+            Diagnosis("mesh", "WARN", "numerics.dx_m missing — mesh/CFL/PML checks skipped")
         )
-        return findings
-
-    dx = numerics_cfg.get("dx_m")
-    dy = numerics_cfg.get("dy_m")
-    dz = numerics_cfg.get("dz_m")
-    if not isinstance(dx, (int, float)) or dx <= 0:
-        findings.append(Diagnosis("mesh", "WARN", "numerics.dx_m missing — cannot verify mesh"))
-        return findings
-    dy = dy if isinstance(dy, (int, float)) and dy > 0 else dx
-    dz = dz if isinstance(dz, (int, float)) and dz > 0 else dx
 
     # 1. mesh resolution
-    mesh = numerics.check_mesh((dx, dy, dz), eps_r, f_hi)
-    findings.append(
-        Diagnosis(
-            "mesh",
-            "BLOCK" if not mesh.ok else "OK",
-            mesh.note,
+    if eps_r is not None and eps_r > 0 and f_hi is not None and dx is not None and dx > 0:
+        mesh = numerics.check_mesh((dx, dy, dz), eps_r, f_hi)
+        findings.append(
+            Diagnosis("mesh", "BLOCK" if not mesh.ok else "OK", mesh.note)
         )
-    )
 
     # 2. CFL / time step
-    dt = _as_float(numerics_cfg, "dt_s")
-    if dt is not None and dt > 0:
-        cfl = numerics.check_cfl(dx, dy, dz, dt)
-        findings.append(
-            Diagnosis(
-                "cfl",
-                "BLOCK" if not cfl.ok else "OK",
-                cfl.note,
+    if dx is not None and dx > 0:
+        if dt is not None and dt > 0:
+            cfl = numerics.check_cfl(dx, dy, dz, dt)
+            findings.append(
+                Diagnosis("cfl", "BLOCK" if not cfl.ok else "OK", cfl.note)
             )
-        )
-    else:
-        findings.append(
-            Diagnosis("cfl", "WARN", "numerics.dt_s missing — CFL check skipped")
-        )
+        else:
+            findings.append(
+                Diagnosis("cfl", "WARN", "numerics.dt_s missing — CFL check skipped")
+            )
 
     # 3. time window vs farthest target
-    target_depth = project.get("target_depth_m")
-    window = _as_float(numerics_cfg, "time_window_s")
-    if isinstance(target_depth, (int, float)) and window is not None:
-        window_check = numerics.check_window(target_depth, eps_r, window, dt or numerics.cfl_dt_s(dx, dy, dz))
+    if (
+        target_depth is not None
+        and target_depth > 0
+        and window is not None
+        and eps_r is not None
+        and eps_r > 0
+    ):
+        dt_for_window = dt if dt is not None and dt > 0 else numerics.cfl_dt_s(dx or 0.05, dy or 0.05, dz or 0.05)
+        window_check = numerics.check_window(target_depth, eps_r, window, dt_for_window)
         findings.append(
             Diagnosis(
                 "window",
@@ -143,23 +156,21 @@ def diagnose_model(
         findings.append(
             Diagnosis(
                 "window", "WARN",
-                "target_depth_m or time_window_s missing — window coverage skipped",
+                "target_depth_m, time_window_s or eps_r missing — window coverage skipped",
             )
         )
 
     # 4. PML clearance
-    pml = numerics_cfg.get("pml_layers")
-    if isinstance(pml, (int, float)) and pml > 0:
+    if dx is not None and dx > 0 and pml is not None and pml > 0:
         clearance = numerics.pml_clearance_m(int(pml), (dx, dy, dz))
-        # Rule of thumb: clearance should be >= a few cells in each axis.
-        severity = "OK"
-        if min(clearance.values()) < 3 * min(dx, dy, dz):
-            severity = "WARN"
+        # gprMax's default PML depth is 10 cells; below that absorption is weak.
+        severity = "OK" if pml >= PML_DEFAULT_LAYERS else "WARN"
         findings.append(
             Diagnosis(
                 "pml",
                 severity,
-                f"PML {int(pml)} layers -> clearance {clearance} m",
+                f"PML {int(pml)} layers -> clearance {clearance} m "
+                f"(gprMax default is {PML_DEFAULT_LAYERS}; fewer may leak)",
             )
         )
     else:
@@ -168,41 +179,50 @@ def diagnose_model(
         )
 
     # 5. Nyquist
-    dt_for_nyquist = dt if isinstance(dt, (int, float)) and dt > 0 else numerics.cfl_dt_s(dx, dy, dz)
-    nyquist = 0.5 / dt_for_nyquist
-    if f_hi >= nyquist:
-        findings.append(
-            Diagnosis(
-                "nyquist",
-                "BLOCK",
-                f"highest tone {f_hi/1e6:.1f} MHz >= Nyquist {nyquist/1e6:.1f} MHz",
+    if f_hi is not None and dx is not None and dx > 0:
+        dt_for_nyquist = dt if dt is not None and dt > 0 else numerics.cfl_dt_s(dx, dy, dz)
+        nyquist = 0.5 / dt_for_nyquist
+        if f_hi >= nyquist:
+            findings.append(
+                Diagnosis(
+                    "nyquist",
+                    "BLOCK",
+                    f"highest tone {f_hi/1e6:.1f} MHz >= Nyquist {nyquist/1e6:.1f} MHz",
+                )
             )
-        )
-    else:
-        findings.append(Diagnosis("nyquist", "OK", f"tones below Nyquist ({nyquist/1e6:.1f} MHz)"))
+        else:
+            findings.append(
+                Diagnosis("nyquist", "OK", f"tones below Nyquist ({nyquist/1e6:.1f} MHz)")
+            )
 
-    # 6. VRAM
-    domain = contract.get("domain_m")
-    if isinstance(domain, (list, tuple)) and len(domain) == 3 and all(
-        isinstance(v, (int, float)) and v > 0 for v in domain
+    # 6. VRAM (respect declared precision)
+    if (
+        isinstance(domain, (list, tuple))
+        and len(domain) == 3
+        and all(isinstance(v, (int, float)) and v > 0 for v in domain)
+        and dx is not None
+        and dx > 0
     ):
+        window_for_vram = window if window is not None and window > 0 else 1e-6
+        dt_for_vram = dt if dt is not None and dt > 0 else numerics.cfl_dt_s(dx, dy, dz)
         resource = numerics.estimate_resources(
-            tuple(domain), (dx, dy, dz), window or 1e-6, dt_for_nyquist
+            tuple(domain), (dx, dy, dz), window_for_vram, dt_for_vram
         )
-        if gpu_vram_gb is not None and resource.vram_gb_fp64 > gpu_vram_gb:
+        want_fp64 = precision in ("float64", "fp64") or (
+            precision == "auto" and resource.vram_gb_fp64 <= (gpu_vram_gb or float("inf"))
+        )
+        if want_fp64:
+            needed = resource.vram_gb_fp64
+            label = "fp64"
+        else:
+            needed = resource.vram_gb_fp32
+            label = "fp32"
+        if gpu_vram_gb is not None and needed > gpu_vram_gb:
             findings.append(
                 Diagnosis(
                     "vram",
                     "BLOCK",
-                    f"fp64 VRAM estimate {resource.vram_gb_fp64:.1f} GB > GPU {gpu_vram_gb:.1f} GB",
-                )
-            )
-        elif gpu_vram_gb is not None and resource.vram_gb_fp32 > gpu_vram_gb:
-            findings.append(
-                Diagnosis(
-                    "vram",
-                    "WARN",
-                    f"fp32 VRAM {resource.vram_gb_fp32:.1f} GB near GPU {gpu_vram_gb:.1f} GB",
+                    f"{label} VRAM estimate {needed:.1f} GB > GPU {gpu_vram_gb:.1f} GB",
                 )
             )
         else:
@@ -210,7 +230,8 @@ def diagnose_model(
                 Diagnosis(
                     "vram",
                     "OK",
-                    f"VRAM est. {resource.vram_gb_fp32:.1f} GB (fp32) / {resource.vram_gb_fp64:.1f} GB (fp64)",
+                    f"VRAM est. {resource.vram_gb_fp32:.1f} GB (fp32) / "
+                    f"{resource.vram_gb_fp64:.1f} GB (fp64); using {label}",
                 )
             )
     else:

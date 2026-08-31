@@ -46,11 +46,18 @@ def labels_matrix(
     index of their distinct value within the column (sorted, deterministic);
     the mapping is recoverable from the case list itself.
     """
-    # Precompute a deterministic categorical encoding per column.
+    # Precompute a deterministic categorical encoding per column. None is
+    # excluded from the categorical set — it is always mapped to NaN in the
+    # matrix, so it must not shift the categorical indices.
     encodings: dict[str, dict[Any, float]] = {}
     for col in columns:
         distinct = sorted(
-            {case.get(col) for case in cases if not isinstance(case.get(col), (int, float))},
+            {
+                case.get(col)
+                for case in cases
+                if case.get(col) is not None
+                and not isinstance(case.get(col), (int, float))
+            },
             key=str,
         )
         encodings[col] = {value: float(index) for index, value in enumerate(distinct)}
@@ -73,16 +80,35 @@ def labels_matrix(
 def _pack_array(
     arrays: Sequence[np.ndarray], dtype: str = "float32"
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Pad variable-length arrays to common shape; return (stack, lengths)."""
-    arrays = [np.asarray(a, dtype=np.float64) for a in arrays]
-    if not arrays:
+    """Pad variable-length arrays to common shape; return (stack, lengths).
+
+    Supports 1-D (A-scan) and N-D (B-scan, multi-channel) arrays. All inputs
+    must share the same shape except the last axis, which is padded to the
+    batch maximum. The ``lengths`` vector records the true last-axis length
+    per sample.
+    """
+    converted = [np.asarray(a, dtype=np.float64) for a in arrays]
+    if not converted:
         raise DatasetError("cannot pack an empty list of arrays")
-    max_len = max(a.shape[-1] for a in arrays)
-    out = np.zeros((len(arrays), max_len), dtype=dtype)
-    lengths = np.zeros(len(arrays), dtype=np.int64)
-    for i, a in enumerate(arrays):
+    for i, a in enumerate(converted):
+        if a.ndim < 1:
+            raise DatasetError(
+                f"array at index {i} is scalar (ndim=0); "
+                "a non-empty 1-D or N-D array is required"
+            )
+    max_len = max(a.shape[-1] for a in converted)
+    ref_shape = converted[0].shape[:-1]
+    for i, a in enumerate(converted):
+        if a.shape[:-1] != ref_shape:
+            raise DatasetError(
+                f"array at index {i} has shape {a.shape} "
+                f"but expected (..., {ref_shape[-1] if ref_shape else ''}, *)"
+            )
+    out = np.zeros((len(converted), *ref_shape, max_len), dtype=dtype)
+    lengths = np.zeros(len(converted), dtype=np.int64)
+    for i, a in enumerate(converted):
         n = a.shape[-1]
-        out[i, :n] = a
+        out[(i, ..., slice(None, n))] = a
         lengths[i] = n
     return out, lengths
 
