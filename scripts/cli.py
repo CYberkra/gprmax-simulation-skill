@@ -33,6 +33,8 @@ import scripts.visualize as visualize
 import scripts.sampling as sampling
 import scripts.batch as batch
 import scripts.dataset as dataset
+import scripts.diagnose as diagnose
+import scripts.sensitivity as sensitivity
 
 
 def build_core_registry() -> GateRegistry:
@@ -467,6 +469,14 @@ def _parser() -> argparse.ArgumentParser:
     dpack.add_argument("--band", default="30-240", help="tone band <lo>-<hi> MHz for processing")
     dpack.add_argument("--df-mhz", type=float, default=1.0)
     dpack.add_argument("--mode", choices=("impulse_lti", "broadband_deconvolution"), default="impulse_lti")
+
+    diag_cmd = commands.add_parser("diagnose")
+    diag_cmd.add_argument("contract", type=Path)
+    diag_cmd.add_argument("--gpu-vram-gb", type=float, default=None)
+
+    sens_cmd = commands.add_parser("sensitivity")
+    sens_cmd.add_argument("contract", type=Path)
+    sens_cmd.add_argument("--perturbation", type=float, default=0.2)
     return parser
 
 
@@ -754,6 +764,34 @@ def _dataset_pack(args: argparse.Namespace) -> int:
     return 0
 
 
+def _diagnose(args: argparse.Namespace) -> int:
+    try:
+        contract = load_contract(args.contract)
+        findings = diagnose.diagnose_model(contract, gpu_vram_gb=args.gpu_vram_gb)
+    except (ValueError, ContractError, OSError, yaml.YAMLError) as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
+    print(diagnose.render_diagnostics(findings))
+    blocking = any(f.severity == "BLOCK" for f in findings)
+    return 2 if blocking else 0
+
+
+def _sensitivity(args: argparse.Namespace) -> int:
+    try:
+        contract = load_contract(args.contract)
+        results = sensitivity.analyse_sensitivity(
+            contract, perturbation=args.perturbation
+        )
+    except (ValueError, ContractError, OSError, yaml.YAMLError) as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
+    print(sensitivity.render_sensitivity(results))
+    print("\n最敏感参数: " + ", ".join(
+        f"{item.parameter}" for item in sensitivity.rank_most_sensitive(results)
+    ))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "init":
@@ -840,6 +878,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.dataset_command == "pack":
             return _dataset_pack(args)
         raise AssertionError(f"unhandled dataset command: {args.dataset_command}")
+    if args.command == "diagnose":
+        return _diagnose(args)
+    if args.command == "sensitivity":
+        return _sensitivity(args)
     raise AssertionError(f"unhandled command: {args.command}")
 
 

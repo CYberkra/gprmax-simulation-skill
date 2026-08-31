@@ -287,6 +287,28 @@ def estimate_resources(
     )
 
 
+def calibrate_throughput(
+    domain_m: tuple[float, float, float],
+    cell_m: tuple[float, float, float],
+    window_s: float,
+    dt_s: float,
+    measured_seconds: float,
+) -> float:
+    """Back out the achieved GPU throughput (cell-updates/s) from a measured run.
+
+    ``measured_seconds`` is the wall time of an actual gprMax run. The
+    returned figure replaces the order-of-magnitude default interval in
+    :func:`estimate_resources`, giving a hardware-calibrated runtime estimate
+    for subsequent models of the same scale.
+    """
+    if not math.isfinite(measured_seconds) or measured_seconds <= 0:
+        raise ValueError("measured_seconds must be a positive finite number")
+    total = grid_cells_total(domain_m, cell_m)
+    steps = max(1, int(math.ceil(window_s / dt_s)))
+    update_ops = total * steps
+    return update_ops / measured_seconds
+
+
 def numerics_report(
     *,
     eps_r: float,
