@@ -350,9 +350,13 @@ def test_e2e_wizard_dump_with_sketch(tmp_path: Path):
             "wizard", "dump", str(session),
             "--out", str(dump_path),
             "--sketch", str(sketch_path),
+            "--report", str(tmp_path / "model_card.md"),
         ]
     )
     assert rc == 0, f"wizard dump failed: {rc}"
     assert dump_path.is_file(), "dump file missing"
     assert sketch_path.is_file(), "sketch PNG missing"
     assert sketch_path.stat().st_size > 5000, "empty sketch"
+    # --report should also write a model card
+    assert (tmp_path / "model_card.md").is_file(), "model card missing"
+    assert "## 处理链" in (tmp_path / "model_card.md").read_text(encoding="utf-8")

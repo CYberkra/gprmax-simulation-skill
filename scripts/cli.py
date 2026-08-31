@@ -147,6 +147,46 @@ def _material_show(name: str, materials_dir: Path, override_dir: Path | None) ->
     return 0
 
 
+def _material_suggest(query: str, materials_dir: Path, top_k: int) -> int:
+    try:
+        if "=" in query:
+            # Inline query: name=eps_r=sigma=model (e.g. wet=5.17=0.05=debye)
+            parts = query.split("=")
+            if len(parts) not in (2, 3, 4):
+                raise materials.MaterialError(
+                    "inline query must be 'name=eps_r[=sigma[=model]]'"
+                )
+            name, eps = parts[0], parts[1]
+            sigma = parts[2] if len(parts) > 2 else "0"
+            model = parts[3] if len(parts) > 3 else "none"
+            props: dict[str, Any] = {"model": model, "eps_r": float(eps), "sigma_s_m": float(sigma)}
+            results = materials.suggest_similar(
+                {"name": name, "properties": props},
+                materials_dir,
+                override_dir=material_override_dir(materials_dir),
+                top_k=top_k,
+            )
+        else:
+            results = materials.suggest_similar(
+                query,
+                materials_dir,
+                override_dir=material_override_dir(materials_dir),
+                top_k=top_k,
+            )
+    except (materials.MaterialError, ValueError) as error:
+        print(f"BLOCK {error}", file=sys.stderr)
+        return 2
+
+    print(f"与 {query!r} 相近的材料（按距离升序）:")
+    for item in results:
+        print(
+            f"- {item['name']} [{item['category']}]  eps={item['eps']} "
+            f"sigma={item['sigma_s_m']:g}  model={item['model']}  "
+            f"距离={item['distance']}  src={item['source'][:40]}"
+        )
+    return 0
+
+
 def _material_index(materials_dir: Path, index_path: Path) -> int:
     index = materials.build_index(materials_dir)
     materials.write_index(index, index_path)
@@ -389,6 +429,10 @@ def _parser() -> argparse.ArgumentParser:
     material_index = material_sub.add_parser("index")
     material_index.add_argument("--materials-dir", type=Path)
     material_index.add_argument("--index-path", type=Path, default=Path("materials_index.json"))
+    material_suggest = material_sub.add_parser("suggest")
+    material_suggest.add_argument("query", help="material name, or 'name=eps_r=sigma=model' inline")
+    material_suggest.add_argument("--materials-dir", type=Path)
+    material_suggest.add_argument("--top-k", type=int, default=5)
 
     preflight = commands.add_parser("preflight")
     preflight.add_argument("contract", type=Path)
@@ -427,6 +471,12 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="also render a geometry cross-section sketch to this PNG after dump",
+    )
+    wdump.add_argument(
+        "--report",
+        type=Path,
+        default=None,
+        help="also write a model-card report (Markdown) to this path after dump",
     )
 
     tcmd = commands.add_parser("template")
@@ -561,7 +611,12 @@ def _wizard_status(session_path: Path) -> int:
     return 0
 
 
-def _wizard_dump(session_path: Path, out: Path | None, sketch_path: Path | None) -> int:
+def _wizard_dump(
+    session_path: Path,
+    out: Path | None,
+    sketch_path: Path | None,
+    report_path: Path | None,
+) -> int:
     session = wizard.load_session(session_path)
     try:
         payload = wizard.dump(session)
@@ -577,13 +632,21 @@ def _wizard_dump(session_path: Path, out: Path | None, sketch_path: Path | None)
         print(f"dump written -> {out}")
     else:
         print(__import__("yaml").safe_dump(payload, sort_keys=False, allow_unicode=True), end="")
+    contract = payload.get("contract_draft", {})
     if sketch_path is not None:
         try:
-            contract = payload.get("contract_draft", {})
             sketch.plot_geometry_sketch(contract, sketch_path)
             print(f"sketch written -> {sketch_path}")
         except (sketch.SketchError, ValueError) as error:
             print(f"WARN sketch not rendered: {error}", file=sys.stderr)
+    if report_path is not None:
+        try:
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            text = report.render_model_card(contract)
+            report_path.write_text(text, encoding="utf-8")
+            print(f"model card written -> {report_path}")
+        except (ValueError, OSError) as error:
+            print(f"WARN model card not rendered: {error}", file=sys.stderr)
     return 0
 
 
@@ -994,6 +1057,8 @@ def main(argv: list[str] | None = None) -> int:
             return _material_show(args.name, materials_dir, None)
         if args.material_command == "index":
             return _material_index(materials_dir, args.index_path)
+        if args.material_command == "suggest":
+            return _material_suggest(args.query, materials_dir, args.top_k)
         raise AssertionError(f"unhandled material command: {args.material_command}")
     if args.command == "preflight":
         return _preflight(args.contract, args.project_root)
@@ -1034,7 +1099,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.wizard_command == "status":
             return _wizard_status(args.session)
         if args.wizard_command == "dump":
-            return _wizard_dump(args.session, args.out, args.sketch)
+            return _wizard_dump(args.session, args.out, args.sketch, args.report)
         raise AssertionError(f"unhandled wizard command: {args.wizard_command}")
     if args.command == "template":
         if args.template_command == "list":

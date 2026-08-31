@@ -400,10 +400,10 @@ SKILL.md（入口/编排）
 | §3（M2 调研/材料库/模板库） | `references/study-materials.md`（材料 schema/调研需求/模板渐进积累）| ✅ 已固化 |
 | §6（M5 环境探测） | `references/numerical-model-validity.md`（Environment probe）| ✅ 已固化 |
 | §8（M8 文件夹管理） | `references/study-layout.md`（标准布局/命名/audit_layout）| ✅ 已固化 |
-| 附 A/B | 独立 case study（`templates/scenarios/` + 未证实观察）| ✅ 煤矿模板已入 `coal_tunnel_sfcw.yaml`；附 B 待归档 |
+| 附 A/B | 独立 case study（`templates/scenarios/` + 未证实观察）| ✅ 煤矿模板已入 `coal_tunnel_sfcw.yaml`；附 B 已归档 `docs/unverified-observations-case-study.md` |
 
 > 注：M1-M3 向导/调研/配置轴与 M5 环境探测/M8 文件夹管理的模块说明已迁移到对应的 references 文件，
-> 本草稿 §2-4/§6/§8 保留为参考上下文。附 B 未证实观察待归档。
+> 本草稿 §2-4/§6/§8 保留为参考上下文。附 B 未证实观察已归档至 `docs/unverified-observations-case-study.md`。
 
 ---
 
@@ -422,6 +422,6 @@ SKILL.md（入口/编排）
 
 ## 附 B. 未完全证实、仅作 case study 的观察
 
-- ~10 MHz 谷深振荡主周期 ↔ ~100 ns 时延差的物理路径未最终归属（棱边衍射/孔径合成/隧道多径候选）
-- 粗糙度/非均匀煤对振荡的量化仅一个深度、两个尺寸，画不出普适曲线
-- v1 频段结论（50-270/60-270/100-270 MHz 等）已整体作废，仅存档
+> 已归档至独立文档 `docs/unverified-observations-case-study.md`。
+> 包含：~10 MHz 谷深振荡、粗糙度量化、v1 作废结论。
+> 引用时请使用该文档，并带状态标注（`[未证实]` / `[有限样本]` / `[已作废]`）。

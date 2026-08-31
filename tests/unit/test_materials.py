@@ -159,3 +159,73 @@ def test_write_index_json(tmp_path: Path):
     assert json.loads(target.read_text(encoding="utf-8")) == {
         "a": {"path": "a.yaml", "category": "rock"}
     }
+
+
+# --------------------------------------------------------------------------
+# suggest_similar
+# --------------------------------------------------------------------------
+
+def _suggestion_library(tmp_path: Path) -> Path:
+    library = tmp_path / "materials"
+    (library / "rock").mkdir(parents=True)
+    entries = {
+        "sand_dry": {
+            "name": "sand_dry", "category": "rock",
+            "properties": {"eps_r": 4.0, "sigma_s_m": 1e-4, "model": "none"},
+            "source": {"kind": "literature", "ref": "Knight 1987"},
+            "confidence": 4,
+        },
+        "coal_dry": {
+            "name": "coal_dry", "category": "rock",
+            "properties": {"eps_r": 2.8, "sigma_s_m": 1.45e-4, "model": "debye"},
+            "source": {"kind": "literature", "ref": "Zhang 2020"},
+            "confidence": 5,
+        },
+        "clay_wet": {
+            "name": "clay_wet", "category": "soil",
+            "properties": {"eps_r": 18.0, "sigma_s_m": 0.05, "model": "debye"},
+            "source": {"kind": "literature", "ref": "Smith 1990"},
+            "confidence": 3,
+        },
+    }
+    for entry in entries.values():
+        (library / "rock" / f"{entry['name']}.yaml").write_text(
+            yaml.safe_dump(entry, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+    return library
+
+
+def test_suggest_similar_by_name_returns_sorted(tmp_path: Path):
+    library = _suggestion_library(tmp_path)
+    results = materials.suggest_similar("coal_dry", library, top_k=3)
+    assert results
+    # distances ascending
+    distances = [item["distance"] for item in results]
+    assert distances == sorted(distances)
+    # the query itself is excluded
+    assert all(item["name"] != "coal_dry" for item in results)
+    # same-model rock material should rank before different-model soil
+    assert results[0]["name"] == "sand_dry"
+
+
+def test_suggest_similar_inline_properties(tmp_path: Path):
+    library = _suggestion_library(tmp_path)
+    query = {"name": "wet_target", "properties": {"eps_r": 5.0, "sigma_s_m": 0.05, "model": "debye"}}
+    results = materials.suggest_similar(query, library, top_k=3)
+    assert results
+    # debye model agreement should lift coal_dry above sand_dry(none)
+    assert results[0]["name"] == "coal_dry"
+    assert results[0]["distance"] < results[1]["distance"]
+
+
+def test_suggest_similar_unknown_name_raises(tmp_path: Path):
+    library = _suggestion_library(tmp_path)
+    with pytest.raises(materials.MaterialError):
+        materials.suggest_similar("no_such_material", library)
+
+
+def test_suggest_similar_respects_top_k(tmp_path: Path):
+    library = _suggestion_library(tmp_path)
+    results = materials.suggest_similar("coal_dry", library, top_k=1)
+    assert len(results) == 1

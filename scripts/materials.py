@@ -20,6 +20,7 @@ Entry schema (see references/simulation-contract.md):
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -182,3 +183,121 @@ def list_entries(materials_dir: Path, override_dir: Path | None = None) -> list[
             if entry["name"] not in names:
                 names.append(entry["name"])
     return sorted(names)
+
+
+# ---------------------------------------------------------------------------
+# similar-material suggestion (M10 innovation: "you may also need")
+# ---------------------------------------------------------------------------
+
+def _eps_scalar(properties: Mapping[str, Any]) -> float | None:
+    """Return a single permittivity figure for ranking (eps_r or eps_inf)."""
+    if properties.get("eps_r") is not None:
+        try:
+            return float(properties["eps_r"])
+        except (TypeError, ValueError):
+            return None
+    for field in ("eps_inf", "eps_s"):
+        value = properties.get(field)
+        if value is not None:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _sigma_scalar(properties: Mapping[str, Any]) -> float:
+    try:
+        return float(properties.get("sigma_s_m", 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def suggest_similar(
+    query: str | Mapping[str, Any],
+    materials_dir: Path,
+    override_dir: Path | None = None,
+    top_k: int = 5,
+) -> list[dict[str, Any]]:
+    """Return library materials similar to *query*, nearest first.
+
+    ``query`` may be an entry name (resolved from the library) or a properties
+    mapping. Similarity uses relative-permittivity distance, log-scaled
+    conductivity distance, dispersion-model agreement, and category agreement.
+    Results are deterministic (tie-break by name).
+    """
+    materials_dir = Path(materials_dir)
+    query_name: str | None = None
+    if isinstance(query, str):
+        query_name = query
+        path = resolve_entry(query, materials_dir, override_dir=override_dir)
+        if path is None:
+            raise MaterialError(f"material {query!r} not found in library")
+        query_entry = load_material(path)
+        query_props = query_entry.get("properties", {})
+    elif isinstance(query, Mapping):
+        query_entry = None
+        query_props = dict(query.get("properties", query))
+    else:
+        raise MaterialError("query must be a material name or a properties mapping")
+
+    q_eps = _eps_scalar(query_props)
+    q_sigma = _sigma_scalar(query_props)
+    q_model = query_props.get("model", "none")
+
+    # Collect every library + override entry once.
+    entries: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for directory in ([Path(override_dir)] if override_dir is not None else []) + [materials_dir]:
+        for path in sorted(directory.rglob("*.yaml")):
+            try:
+                entry = load_material(path)
+            except MaterialError:
+                continue
+            if entry["name"] in seen or entry["name"] == query_name:
+                continue
+            seen.add(entry["name"])
+            entries.append(entry)
+
+    scored: list[tuple[float, str, dict[str, Any]]] = []
+    for entry in entries:
+        props = entry.get("properties", {})
+        c_eps = _eps_scalar(props)
+        c_sigma = _sigma_scalar(props)
+        c_model = props.get("model", "none")
+
+        eps_dist = 0.0
+        if q_eps is not None and c_eps is not None and c_eps > 0:
+            eps_dist = abs(q_eps - c_eps) / max(q_eps, 1e-9)
+        elif q_eps is not None and c_eps is None:
+            eps_dist = 1.0  # incomparable permittivity is a strong mismatch
+
+        # Conductivity spans decades -> compare on log10 scale.
+        if q_sigma > 0 and c_sigma > 0:
+            sigma_dist = abs(math.log10(q_sigma) - math.log10(c_sigma))
+        elif q_sigma == c_sigma:
+            sigma_dist = 0.0
+        else:
+            sigma_dist = 2.0  # zero vs non-zero conductivity
+
+        model_bonus = 1.0 if c_model == q_model else 0.0
+        category_bonus = 1.0 if entry.get("category") == (query_entry or {}).get("category") else 0.0
+
+        # Lower distance is better; higher bonuses are better.
+        distance = 0.6 * eps_dist + 0.4 * sigma_dist - 0.15 * model_bonus - 0.1 * category_bonus
+        scored.append((distance, entry["name"], entry))
+
+    scored.sort(key=lambda item: (item[0], item[1]))
+    return [
+        {
+            "name": entry["name"],
+            "category": entry.get("category"),
+            "distance": round(distance, 4),
+            "eps": _eps_scalar(entry.get("properties", {})),
+            "sigma_s_m": _sigma_scalar(entry.get("properties", {})),
+            "model": entry.get("properties", {}).get("model", "none"),
+            "source": (entry.get("source", {}) or {}).get("ref", ""),
+            "confidence": entry.get("confidence", 3),
+        }
+        for distance, _, entry in scored[:top_k]
+    ]
