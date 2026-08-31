@@ -1,0 +1,49 @@
+name: coal_tunnel_irregular_fp64
+scenario: 煤矿巷道不规则目标 FP64 面积扫掠
+status: verified
+verified_by:
+  - 30_20260823_D80_L096_IRREGULAR_AREA_FP64 (20260823)
+  - 26-31 FP64 面积阈值系列 (20260823)
+match:
+  scenario_type: tunnel
+  needs_sfcw: true
+  depth_range_m: [50, 100]
+frozen_parameters:
+  medium:
+    model: debye
+    debye_eps_inf: 2.811
+    debye_delta_eps: 0.182
+    debye_tau_s: 3.397e-10
+    sigma_s_m: 1.45e-4
+    source: NEWCOAL (Zhang 2020)
+  target:
+    material: 干燥砂岩夹矸（dry_gangue）
+    eps_r: 5.0
+    sigma_s_m: 0.001
+    geometry_type: irregular
+    note: 非规则 y-z 轮廓（带两侧台阶和局部收缩），#geometry_objects_read 读取 HDF5 掩膜
+  antenna:
+    type: ideal_hertzian
+    polarization: z
+    tx_rx_baseline_m: 1.0
+    tx_m: [4.0, 7.5, 3.5]
+    rx_m: [4.0, 8.5, 3.5]
+  grid:
+    dx_m: 0.04
+    dy_m: 0.05
+    dz_m: 0.05
+    domain_m: [92.0, 16.0, 7.0]
+    pml_cells: [20, 11, 11, 20, 11, 11]
+    time_step_stability_factor: 0.99
+  waveform:
+    sfcw_mode: impulse_lti
+    excitation: sinc265p5L
+    time_window_s: 1.8e-6
+    note: 265.5 MHz 截止 sinc 激励，1.8 µs 时窗；频带由分辨率判据决定
+  precision:
+    requirement: fp64
+    note: 面积阈值判据需要高动态范围，fp64 强制
+  processing:
+    core_chain: a_chain
+    note: 冻结 A 链：exact 复频率采样 → Wiener 去卷积 → 选频带 → Blackman → zero-padded IFFT；H1-H0 包络谷深分析
+applicability: 80 m 深部煤巷 SFCW 频段判决类研究，不规则目标体（非 box 几何），FP64 精度
