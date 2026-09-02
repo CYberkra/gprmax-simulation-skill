@@ -1,7 +1,7 @@
 ---
 name: gprmax-simulation
 description: >-
-  Use when building a new gprMax model (including a stepped-frequency /
+  Use when building or changing a gprMax model (including a stepped-frequency /
   SFCW-equivalent study), auditing existing simulation outputs, making an
   SFCW-equivalent claim on existing results, or comparing controlled cases.
 ---
@@ -15,9 +15,10 @@ model and the recorded processing chain that produced it.
 ## Route
 
 Follow the path for your branch in order, completing each section's completion
-criterion before moving on. Sections are ordered by the `New model` path; other
-branches skip or reorder steps as shown below. Pick `New SFCW model` (not
-`New model`) when the
+criterion before moving on. Every section is self-contained — each carries its
+own reference pointers and completion criterion — so the table below, not the
+physical section order, determines what runs and in what order. Pick
+`New SFCW model` (not `New model`) when the
 request calls for a stepped-frequency or SFCW-equivalent conclusion — that
 branch adds §Reconstruct SFCW faithfully (the guided-setup interview in §Drive
 can also switch you to it mid-path).
@@ -43,19 +44,15 @@ permitted claim, and the study design — a single-variable study with one facto
 or a multi-factor design with a factor list. read
 [simulation-contract.md](references/simulation-contract.md), then agree the
 claim-level contract with the user — the design type (`single_variable` |
-`multi_factor`), the factor list, and every invariant held constant — for
-recording in the study's `simulation_contract.yaml` (written in §Drive after
-the wizard session promotes the contract draft). Defer the schema-required
-technical fields (domain, mesh, material, geometry, source/receiver, boundary,
-time-window, precision, processing) to §Drive the model from a guided setup,
-which fills them from the wizard answers. The claim-level contract is complete
-when it names a reference case, a scientific question, a permitted claim, and a
-design type, and every factor level and invariant is agreed with the user;
-writing them into `simulation_contract.yaml` is deferred to §Drive the model
-from a guided setup. Schema validation is
-deferred to §Drive the model from a guided setup, which fills the technical
-fields and confirms the full contract validates against
-`schemas/simulation_contract.schema.json`.
+`multi_factor`), the factor list, and every invariant held constant. The
+claim-level contract is complete when it names a reference case, a scientific
+question, a permitted claim, and a design type, and every factor level and
+invariant is agreed with the user. Writing the contract — including the
+schema-required technical fields (domain, mesh, material, geometry,
+source/receiver, boundary, time-window, precision, processing) — into
+`simulation_contract.yaml` and validating it against
+`schemas/simulation_contract.schema.json` is deferred to §Drive the model from
+a guided setup, which fills them from the wizard answers.
 
 ## Drive the model from a guided setup
 
@@ -91,7 +88,7 @@ Generate a geometry cross-section sketch at wizard dump time
 (`gprmax-skill wizard dump <session> --sketch <out.png>`) so the user sees the
 domain, host medium, target at depth, and Tx/Rx before any mesh exists. The
 dump also accepts `--report <model-card.md>`; prefer the standalone
-`gprmax-skill report model-card <contract> --probe <probe.json>` command as the
+`gprmax-skill report model-card <contract> --probe <probe.json> --out <study>/model_card.md` command as the
 canonical model card, since it carries the environment probe. The dump writes a
 session payload, not the final contract: promote its `contract_draft` block
 into the study's `simulation_contract.yaml`, then record the factor levels and
@@ -99,7 +96,7 @@ invariants there and confirm it validates against
 `schemas/simulation_contract.schema.json`. When the model is established,
 capture the environment with `gprmax-skill probe --json > <probe.json>` and
 produce a model-card report
-(`gprmax-skill report model-card <contract> --probe <probe.json>`) that
+(`gprmax-skill report model-card <contract> --probe <probe.json> --out <study>/model_card.md`) that
 consolidates the contract and environment probe; refresh it later once the
 diagnostics, sensitivity findings, and the fixed processing chain exist (see
 §Process results for inspection).
@@ -140,7 +137,7 @@ categories, display-only discipline, and the user-priority rule. Deliver the
 artifact with every time/distance figure carrying its coordinate datum,
 propagation convention, exact processing chain, and scope of validity, then
 regenerate the model card as the fixed-chain record with
-`gprmax-skill report model-card <contract> --probe <probe.json> --chain {raw_visual,standard,advanced,imaging,display_enhancement}`
+`gprmax-skill report model-card <contract> --probe <probe.json> --out <study>/model_card.md --chain {raw_visual,standard,advanced,imaging,display_enhancement}`
 (also pass `--diagnostics <diagnose.json>` and `--sensitivity <sensitivity.json>`
 when they exist from the study's setup phase; on branches that skip the guided
 setup, reuse the probe recorded in the study log or capture one first with
@@ -205,9 +202,12 @@ geometry/configuration tests pass or are waived with recorded authority.
 read [gates-and-claims.md](references/gates-and-claims.md) for the shared gate
 vocabulary, the `F0`–`F5` fidelity ladder, and the minimum fidelity each claim
 class requires; interpret every check through that vocabulary before
-interpreting any gate report or signing a claim. Map the wizard fidelity intent
+interpreting any gate report or signing a claim. On branches that ran the
+guided setup, map the wizard fidelity intent
 (quick / standard / publication) to the `F0`–`F5` ladder: quick → `F1`–`F2`,
-standard → `F3`, publication → `F4`–`F5`. Promotion is **fail-closed**:
+standard → `F3`, publication → `F4`–`F5`; on branches that audit or compare
+existing results, derive the fidelity intent from the study's recorded contract
+or evidence instead. Promotion is **fail-closed**:
 a blocked or stale gate stops promotion; an upstream change invalidates
 downstream evidence to `STALE` until revalidated. Record any fidelity
 promotion through `gprmax-skill promote <level> --project-root <study>` (exit
@@ -226,10 +226,10 @@ result — is interpreted with its effect on the claim recorded.
 
 read [preflight-and-audit.md](references/preflight-and-audit.md) for the HDF5
 output audit procedure (dataset existence, dtype, shape, timestep, sample count,
-and manifest reconciliation). Missing, duplicate, truncated, stale, or unmapped
-outputs are audit failures, not analysable results. The audit is complete when
-every expected output is reconciled against its manifest entry and each audit
-failure above is recorded.
+and manifest reconciliation). Missing, duplicate, truncated, hash-mismatched, or
+unmapped outputs are audit failures, not analysable results. The audit is
+complete when every expected output is reconciled against its manifest entry
+and each audit failure above is recorded.
 
 ## Reconstruct SFCW faithfully
 
@@ -251,7 +251,10 @@ processing-detail sidecar in the study package. For the packaged
 reconstruction, run `gprmax-skill sfcw process <out> --band <lo>-<hi>
 [--chain {auto,raw_visual,standard,advanced,imaging,display_enhancement}] [--mode impulse_lti|broadband_deconvolution]` to produce the
 A-scan artifact and its parameter record; the declared processing chain is
-applied via `--chain`, and `--mode` still wins when both are given.
+applied via `--chain`, and `--mode` still wins when both are given. When the
+model card is regenerated in §Process results for inspection, reuse the same
+`--chain` value applied here so the fixed-chain record matches the executed
+chain.
 Reconstruction is complete when the SFCW processing chain is declared, the
 source gate is run and its result (pass or blocking with sidecar) is preserved
 in the study package, and the reconstructed A-scan artifact with its parameter
@@ -301,11 +304,12 @@ recorded in the README.
 ## Close the evidence package
 
 read [preflight-and-audit.md](references/preflight-and-audit.md#deliverable-contents)
-for the deliverable set and the figure-labeling rule (coordinate datum,
-propagation convention, processing chain, scope of validity), then preserve it
-in the study package. Present a background-subtracted
-residual as a residual, with the subtraction operator and raw data identified.
-Record the claim state (UNVERIFIED / CONDITIONAL / VERIFIED / REJECTED) with
-its supporting evidence in the study package. The evidence package is complete
-when the deliverable set defined in the reference above is present and the
-labeling rule above holds.
+for the deliverable set, then preserve it in the study package. Apply the
+figure-labeling rule from §Process results for inspection (coordinate datum,
+propagation convention, exact processing chain, scope of validity). Present a
+background-subtracted residual as a residual, with the subtraction operator and
+raw data identified.
+Record the claim state (UNVERIFIED / CONDITIONAL / VERIFIED / REJECTED /
+STALE) with its supporting evidence in the study package. The evidence package
+is complete when the deliverable set defined in the reference above is present
+and the labeling rule above holds.

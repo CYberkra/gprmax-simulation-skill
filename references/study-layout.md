@@ -24,6 +24,7 @@ engineer) can navigate any study without a custom index:
 ├── outputs/                     # raw .out — immutable, read-only
 ├── analysis/                    # processing code + intermediates
 ├── results/                     # final figures, tables, conclusions
+├── model_card.md                # model-card report (contract, probe, diagnostics)
 └── evidence/                    # audit reports, hashes, manifest copies
 ```
 
