@@ -36,9 +36,11 @@ those values scoped to this project rather than carrying them elsewhere.
 Work **claim-first**: identify the reference case, the scientific question, the
 permitted claim, and the study design — a single-variable study with one factor,
 or a multi-factor design with a factor list. read
-[simulation-contract.md](references/simulation-contract.md), then record the
-claim-level contract — the design type (`single_variable` | `multi_factor`), the
-factor list, and every invariant held constant. Defer the schema-required
+[simulation-contract.md](references/simulation-contract.md), then agree the
+claim-level contract with the user — the design type (`single_variable` |
+`multi_factor`), the factor list, and every invariant held constant — for
+recording in the study's `simulation_contract.yaml` (written in §Drive after
+the wizard session promotes the contract draft). Defer the schema-required
 technical fields (domain, mesh, material, geometry, source/receiver, boundary,
 time-window, precision, processing) to §Drive the model from a guided setup,
 which fills them from the wizard answers. The claim-level contract is complete
@@ -47,9 +49,6 @@ and invariant. Schema validation is deferred to §Drive the model from a guided
 setup, which fills the technical fields and confirms the full contract
 validates against `schemas/simulation_contract.schema.json`.
 
-For new or changed geometry and solver settings, read
-[numerical-model-validity.md](references/numerical-model-validity.md).
-
 ## Drive the model from a guided setup
 
 When the user wants to build a new model type, run the guided setup before
@@ -57,7 +56,9 @@ writing any input: interview the user to establish the scenario, target and
 surrounding medium, frequency band and whether an SFCW-equivalent conclusion is
 needed, fidelity intent, and the run environment (probe the local environment —
 GPU, memory, disk, Python version, gprMax presence — to inform the choice, and
-let the user decide local or server). Initialise a wizard session
+let the user decide local or server). If the SFCW answer is yes, switch to the
+New SFCW model path from this point forward (add §Reconstruct SFCW faithfully
+between §Audit and §Process). Initialise a wizard session
 (`gprmax-skill wizard init <session>`), record each validated answer
 (`gprmax-skill wizard answer <session> <field> <value>`), correct an earlier
 answer (`gprmax-skill wizard back <session> [--steps N]`), check progress
@@ -132,8 +133,9 @@ complete when the chain is chosen, its parameters recorded, and the artifact is
 delivered with every time/distance figure carrying its coordinate datum,
 propagation convention, exact processing chain, and scope of validity; then
 regenerate the model card as the fixed-chain record with
-`gprmax-skill report model-card <contract> --probe <probe.json> --diagnostics
-<diagnose.json> --sensitivity <sensitivity.json> --chain <chain>` and keep that
+`gprmax-skill report model-card <contract> --probe <probe.json> --chain <chain>`
+(also pass `--diagnostics <diagnose.json>` and `--sensitivity <sensitivity.json>`
+when they exist from the study's setup phase) and keep that
 card in the study package.
 
 ## Keep comparisons controlled
@@ -176,8 +178,9 @@ repaired and the gate rerun. Run the setup-time failure diagnostics before GPU
 execution — `gprmax-skill diagnose <contract> --gpu-vram-gb <GB> --json >
 <diagnose.json>` and `gprmax-skill sensitivity <contract> --json >
 <sensitivity.json>` — using the probed GPU memory for the VRAM gate. A `BLOCK`
-diagnostic (for example VRAM or time-window coverage) stops execution until the
-cause is repaired and the gate rerun. Confirm that the selected build and
+from `diagnose` (for example VRAM or time-window coverage) stops execution
+until the cause is repaired and the gate rerun; `sensitivity` is advisory and
+does not gate. Confirm that the selected build and
 allocated hardware support the requested calculation. Stop on a repeated
 simulation error and report it; change precision or model only with recorded
 authority.
@@ -232,8 +235,8 @@ and stops downstream processing evidence; preserve both the gate report and its
 processing-detail sidecar in the study package. For the packaged
 reconstruction, `gprmax-skill sfcw process <out> --band <lo>-<hi> [--chain <chain>] [--mode
 impulse_lti|broadband_deconvolution]` produces the A-scan artifact and its
-parameter record; the processing chain chosen in §Process results is applied
-via `--chain`, and `--mode` still wins when both are given. Reconstruction is
+parameter record; the declared processing chain is applied via `--chain`, and
+`--mode` still wins when both are given. Reconstruction is
 complete when the SFCW processing chain is declared, the source gate is run,
 and its result (pass or blocking with sidecar) is preserved in the study
 package.
@@ -242,8 +245,9 @@ package.
 
 Work **claim-first**: the metric must answer the claim it was
 declared for. Keep raw, physically calibrated, and display-only products
-separate. Freeze the processing chain and metric definition before comparative
-evaluation. A peak,
+separate. Freeze the metric definition before comparative evaluation — the
+processing chain is already frozen by §Process or §Reconstruct; on the Compare
+branch verify it is consistent. A peak,
 envelope valley, -3 dB width, detection statistic, localization estimate,
 two-interface separation, and thickness estimate answer different questions;
 none automatically proves another.
@@ -276,8 +280,9 @@ README.
 ## Close the evidence package
 
 read [preflight-and-audit.md](references/preflight-and-audit.md#deliverable-contents) for the deliverable set, then preserve it in the study package.
-Every reported figure carries the labeling required by §Process results for
-inspection. Present a background-subtracted residual as a residual, with the
-subtraction operator and raw data identified. The evidence package is complete
+Every reported figure must state its coordinate datum, propagation convention,
+exact processing chain, and scope of validity. Present a background-subtracted
+residual as a residual, with the subtraction operator and raw data identified.
+The evidence package is complete
 when the deliverable set defined in the reference above is present and the
 labeling rule above holds.
