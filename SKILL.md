@@ -1,6 +1,6 @@
 ---
 name: gprmax-simulation
-description: Plan, build, run, reconstruct, and audit reproducible gprMax FDTD simulations, including SFCW or broadband-to-SFCW-equivalent GPR studies. Use for gprMax model changes, controlled sweeps, GPU-run preparation, output audit, SFCW reconstruction, or defensible detection/resolution/thickness claims on gprMax cases or outputs; route generic GPR presentation to a presentation skill.
+description: Plan, build, run, reconstruct, and audit reproducible gprMax FDTD simulations, including SFCW or broadband-to-SFCW-equivalent GPR studies. Use for building or running gprMax cases and sweeps, auditing existing outputs, SFCW reconstruction, controlled comparisons, or defensible detection/resolution/thickness claims on gprMax cases or outputs; route generic GPR presentation to a presentation skill.
 metadata:
   short-description: Reproducible gprMax and SFCW simulation workflow
 ---
@@ -9,32 +9,34 @@ metadata:
 
 Use this skill to keep a gprMax study traceable from physical assumptions to
 audited outputs and bounded conclusions. Preserve solver physics and evidence;
-do not let a visually persuasive plot replace a controlled model or a recorded
-processing chain.
+anchor every plot in the controlled model and the recorded processing chain that
+produced it.
 
 ## Route
 
 | Branch | Path |
 |--------|------|
-| New model | §Start with the local contract → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches (if sweep) → §Respect fidelity and gate states → §Close the evidence package |
-| Audit existing outputs | §Audit outputs before interpreting them → §Keep comparisons controlled → §Respect fidelity and gate states → §Close the evidence package |
-| SFCW claim | §Start with the local contract → §Reconstruct SFCW faithfully → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
-| Compare results | §Keep comparisons controlled → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
+| New model | §Start with the local contract → §Follow the study directory convention → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches (if sweep) → §Process results for inspection → §Respect fidelity and gate states → §Close the evidence package |
+| Audit existing outputs | §Audit outputs before interpreting them → §Follow the study directory convention → §Keep comparisons controlled → §Respect fidelity and gate states → §Close the evidence package |
+| SFCW claim | §Start with the local contract → §Audit outputs before interpreting them → §Reconstruct SFCW faithfully → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
+| Compare results | §Audit outputs before interpreting them → §Keep comparisons controlled → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
 
 ## Start with the local contract
 
 Read the repository's `AGENTS.md`, study README, and supplied case materials
-before changing a model. They can define project-specific requirements; do not
-turn those local values into universal defaults.
+before changing a model. They can define project-specific requirements; keep
+those values scoped to this project rather than carrying them elsewhere.
 
 Work **claim-first**: identify the reference case, the scientific question, the
 permitted claim, and the study design: a single-variable study with one factor,
-or a multi-factor design with a factor list. Record the factors and their levels and every
-invariant held constant, plus the design type (`single_variable` |
-`multi_factor`). Record the domain, mesh, material and dispersion
-models, target geometry, source/receiver configuration, boundaries, time
-window, requested numerical precision, excitation, receiver dataset, and—when
-applicable—the intended SFCW tone grid and processing convention.
+or a multi-factor design with a factor list. Record the full contract per
+[simulation-contract.md](references/simulation-contract.md) — the factors, their
+levels, and every invariant held constant, plus the design type
+(`single_variable` | `multi_factor`) and every domain, mesh, material,
+geometry, source/receiver, boundary, time-window, precision, and processing
+field the schema requires. The contract is complete when it validates against
+`schemas/simulation_contract.schema.json`, names a reference case and design
+type, and records every factor level and invariant.
 
 For new or changed geometry and solver settings, read
 [simulation-contract.md](references/simulation-contract.md) and
@@ -55,8 +57,7 @@ fold-open rationale, then generate a geometry sketch and the
 `simulation_contract.yaml` skeleton for confirmation.
 
 Probe the local environment (GPU, memory, disk, Python version, gprMax
-presence) to know what is available, but never decide the run environment on
-the user's behalf; the user chooses local or server.
+presence) to inform the choice, and let the user decide local or server.
 
 For the interview order, answer validation, and configuration-axis
 recommendations (including the L1–L4 irregular-geometry tiers and fidelity
@@ -66,9 +67,9 @@ research-need identification, and scene-template progressive accumulation, read
 [study-materials.md](references/study-materials.md).
 
 Generate a geometry cross-section sketch at wizard dump time
-(`wizard dump --sketch <out.png>`) so the user sees the domain, host medium,
+(`gprmax-skill wizard dump --sketch <out.png>`) so the user sees the domain, host medium,
 target at depth, and Tx/Rx before any mesh exists. When the model is
-established, produce a model-card report (`report model-card <contract>`) that
+established, produce a model-card report (`gprmax-skill report model-card <contract>`) that
 consolidates the contract, numerical gates, sensitivity, processing chain, and
 environment into a single deliverable.
 
@@ -81,11 +82,11 @@ enter the run queue. Prefer the study's runner for execution; record per-case
 logs, support resume on existing outputs, and produce a status table with a
 live progress view.
 
-**Do not batch before the model is established.** A new project must first
+**Batch only after the model is established.** A new project must first
 complete the guided setup (contract with a declared dimension, resolved
 medium/target materials, and a frequency band) and run at least one single-case
-verification that produces auditable ``.out`` evidence. Run ``dataset check-model``
-to inspect readiness; ``dataset sample --force`` skips the gate explicitly.
+verification that produces auditable ``.out`` evidence. Run ``gprmax-skill dataset check-model``
+to inspect readiness; ``gprmax-skill dataset sample --force`` skips the gate explicitly.
 
 ## Process results for inspection
 
@@ -93,8 +94,9 @@ gprMax raw outputs usually need processing to be visibly informative as A-scan /
 B-scan. Recommend a processing chain matched to the question (raw display,
 standard chain, advanced deconvolution/windowing/envelope, optional imaging,
 display-only enhancement) and keep display enhancement separate from
-quantitative metrics. When the user specifies a processing choice, follow the
-user's request. Record the chain parameters for reproducibility. The processed
+quantitative metrics. Recommend a processing chain matched to the question; adopt
+the user's explicit choice when one is given. Record the chain parameters for
+reproducibility. The processed
 result (A-scan, B-scan, or figure) is the artifact; label it per §Close the
 evidence package before delivering.
 
@@ -115,16 +117,16 @@ record the limitation and obtain authority before requesting replacement compute
 ## Validate before expensive execution
 
 Align critical dimensions, sources, receivers, and interfaces to the mesh and
-report the discretised dimensions as cell counts times cell spacings. Do not
-silently change physical properties, geometry, source/receiver placement,
+report the discretised dimensions as cell counts times cell spacings. Declare and
+record every change to physical properties, geometry, source/receiver placement,
 waveform, boundary treatment, or precision. Run focused geometry/configuration
 checks when provided; keep costly gprMax execution outside unit tests.
 
 Before GPU execution, prepare a manifest and case list. Record the command,
 solver version/build, requested precision, GPU mapping, case order, and log
 paths. Confirm that the selected build and allocated hardware support the
-requested calculation. Stop on a repeated simulation error; do not silently
-substitute a different precision or model.
+requested calculation. Stop on a repeated simulation error and report it; change
+precision or model only with recorded authority.
 
 ## Respect fidelity and gate states
 
@@ -133,7 +135,7 @@ Interpret every check through the shared gate vocabulary:
 gates, and `UNVERIFIED` / `CONDITIONAL` / `VERIFIED` / `REJECTED` / `STALE` for
 claims. Promotion is **fail-closed**: a blocked or stale gate stops promotion; an
 upstream change invalidates downstream evidence to `STALE` until revalidated.
-Never treat a stale result as current.
+Treat a stale result as invalid until it is revalidated.
 
 Claims license only the fidelity they earn: `F0` analytic sanity, `F1` minimal
 numerical physics, `F2` reduced-dimensional propagation, `F3` simplified 3-D,
@@ -179,8 +181,8 @@ envelope valley, -3 dB width, detection statistic, localization estimate,
 two-interface separation, and thickness estimate answer different questions;
 none automatically proves another.
 
-For finite 3-D objects, do not impose infinite-plane or one-dimensional
-interface-polarity expectations unless the model has been validated for that
+For finite 3-D objects, apply infinite-plane or one-dimensional
+interface-polarity expectations only where the model has been validated for that
 scattering regime. Use waveform polarity only where the physical representation
 supports it; use declared energy/envelope metrics for amplitude separability.
 
@@ -195,8 +197,8 @@ Maintain a standard directory layout: `README.md`, `simulation_contract.yaml`,
 `logs/`, `outputs/` (read-only raw evidence), `analysis/`, `results/`, and
 `evidence/`. Name study directories with a date and key parameters
 (`01_20260830_SFCW_SLIDE_WET`). Record every intentional change in the study
-README. Create a new dated directory for a materially changed model; do not
-modify frozen packages.
+README. Create a new dated directory for a materially changed model; keep frozen
+packages frozen.
 
 Read [study-layout.md](references/study-layout.md) for the full layout, naming
 conventions, discipline rules, and the `gprmax-skill layout audit` check before
