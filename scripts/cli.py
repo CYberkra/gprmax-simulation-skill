@@ -582,7 +582,12 @@ def _parser() -> argparse.ArgumentParser:
     mcard.add_argument("--out", type=Path, default=Path("model_card.md"))
     mcard.add_argument("--diagnostics", type=Path, default=None, help="diagnose JSON/artifact")
     mcard.add_argument("--sensitivity", type=Path, default=None, help="sensitivity JSON/artifact")
-    mcard.add_argument("--chain", type=str, default=None, help="processing chain name")
+    mcard.add_argument(
+        "--chain",
+        choices=("raw_visual", "standard", "advanced", "imaging", "display_enhancement"),
+        default=None,
+        help="processing chain name",
+    )
     mcard.add_argument("--probe", type=Path, default=None, help="environment probe JSON")
 
     skcmd = commands.add_parser("sketch")

@@ -24,9 +24,8 @@ guided-setup interview answers yes to the SFCW question — that branch adds
 | New model | §Start with the local contract → §Follow the study directory convention → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches → §Audit outputs before interpreting them → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
 | New SFCW model | §Start with the local contract → §Follow the study directory convention → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches → §Audit outputs before interpreting them → §Reconstruct SFCW faithfully → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
 | Audit existing outputs | §Audit outputs before interpreting them → §Follow the study directory convention → §Respect fidelity and gate states → §Close the evidence package (include §Keep comparisons controlled when the audit covers a target/background pair or a reference comparison) |
-| SFCW claim | §Start with the local contract → §Follow the study directory convention → §Audit outputs before interpreting them → §Reconstruct SFCW faithfully → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
+| SFCW claim | §Start with the local contract → §Follow the study directory convention → §Audit outputs before interpreting them → §Reconstruct SFCW faithfully → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package (include §Keep comparisons controlled when the claim rests on a target/background pair or a reference comparison) |
 | Compare results | §Audit outputs before interpreting them → §Keep comparisons controlled → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
-| Generic GPR presentation | route to a presentation skill — not covered here |
 
 ## Start with the local contract
 
@@ -93,8 +92,9 @@ produce a model-card report
 consolidates the contract and environment probe; refresh it later — after
 `gprmax-skill diagnose <contract> --json > <diagnose.json>` and
 `gprmax-skill sensitivity <contract> --json > <sensitivity.json>` have produced
-their findings and the processing chain is fixed — with
-`--diagnostics <diagnose.json> --sensitivity <sensitivity.json> --chain <raw_visual|standard|advanced|imaging|display_enhancement>`.
+their findings (see §Validate before expensive execution) and the processing
+chain is fixed — with
+`--probe <probe.json> --diagnostics <diagnose.json> --sensitivity <sensitivity.json> --chain <raw_visual|standard|advanced|imaging|display_enhancement>`.
 The guided setup is complete when
 the user has confirmed the interview answers, the geometry sketch is generated,
 the `simulation_contract.yaml` validates against the schema, and the initial
@@ -166,13 +166,19 @@ solver version/build, requested precision, GPU mapping, case order, and log
 paths. Run the fail-closed model gates (`gprmax-skill preflight <contract>
 --project-root <study>`) and confirm the `gates/preflight.json` report has no
 `BLOCK` or `STALE` result; a blocked gate stops execution until the cause is
-repaired and the gate rerun. Confirm that the selected build and allocated
-hardware support the requested calculation. Stop on a repeated simulation error
-and report it; change precision or model only with recorded authority.
+repaired and the gate rerun. Run the setup-time failure diagnostics before GPU
+execution — `gprmax-skill diagnose <contract> --gpu-vram-gb <GB> --json >
+<diagnose.json>` and `gprmax-skill sensitivity <contract> --json >
+<sensitivity.json>` — using the probed GPU memory for the VRAM gate. A `BLOCK`
+diagnostic (for example VRAM or time-window coverage) stops execution until the
+cause is repaired and the gate rerun. Confirm that the selected build and
+allocated hardware support the requested calculation. Stop on a repeated
+simulation error and report it; change precision or model only with recorded
+authority.
 Validation is complete when the discretised dimensions are reported, the
 manifest is prepared, the preflight gate report is recorded with no blocked or
-stale result, and any geometry/configuration tests pass or are waived with
-recorded authority.
+stale result, no blocking diagnostic is recorded, and any
+geometry/configuration tests pass or are waived with recorded authority.
 
 ## Respect fidelity and gate states
 
