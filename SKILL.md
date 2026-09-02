@@ -17,7 +17,10 @@ model and the recorded processing chain that produced it.
 Follow the path for your branch in order, completing each section's completion
 criterion before moving on. Every section is self-contained — each carries its
 own reference pointers and completion criterion — so the table below, not the
-physical section order, determines what runs and in what order. Pick
+physical section order, determines what runs and in what order. Commands that
+target a study take the study directory as `--project-root <study>` (dataset,
+report, preflight, promote, validate-source); `init` and `layout audit` take it
+as the positional `<study-dir>`. Pick
 `New SFCW model` (not `New model`) when the
 request calls for a stepped-frequency or SFCW-equivalent conclusion — that
 branch adds §Reconstruct SFCW faithfully (the guided-setup interview in §Drive
@@ -29,7 +32,7 @@ can also switch you to it mid-path).
 | New SFCW model | §Start with the local contract → §Follow the study directory convention → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches → §Audit outputs before interpreting them → §Reconstruct SFCW faithfully → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
 | Audit existing outputs | §Follow the study directory convention → §Audit outputs before interpreting them → (include §Keep comparisons controlled when the audit covers a target/background pair or a reference comparison) → §Respect fidelity and gate states → §Close the evidence package |
 | SFCW claim | §Start with the local contract → §Follow the study directory convention → §Audit outputs before interpreting them → §Reconstruct SFCW faithfully → (include §Keep comparisons controlled when the claim rests on a target/background pair or a reference comparison) → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
-| Compare results | §Audit outputs before interpreting them → §Keep comparisons controlled → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
+| Compare results | §Follow the study directory convention → §Audit outputs before interpreting them → §Keep comparisons controlled → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
 
 ## Start with the local contract
 
@@ -52,7 +55,8 @@ schema-required technical fields (domain, mesh, material, geometry,
 source/receiver, boundary, time-window, precision, processing) — into
 `simulation_contract.yaml` and validating it against
 `schemas/simulation_contract.schema.json` is deferred to §Drive the model from
-a guided setup, which fills them from the wizard answers.
+a guided setup, which fills them from the wizard answers; branches that do not
+run §Drive rely on the study's existing recorded contract instead.
 
 ## Drive the model from a guided setup
 
@@ -62,8 +66,7 @@ surrounding medium, frequency band and whether an SFCW-equivalent conclusion is
 needed, fidelity intent, and the run environment (probe the local environment —
 GPU, memory, disk, Python version, gprMax presence — to inform the choice, and
 let the user decide local or server). If the SFCW answer is yes, switch to the
-New SFCW model path from this point forward (add §Reconstruct SFCW faithfully
-between §Audit and §Process). Initialise a wizard session
+`New SFCW model` branch in the route table from this point forward. Initialise a wizard session
 (`gprmax-skill wizard init <session>`), record each validated answer
 (`gprmax-skill wizard answer <session> <field> <value>`), correct an earlier
 answer (`gprmax-skill wizard back <session> [--steps N]`), check progress
@@ -87,9 +90,9 @@ research-need identification, and scene-template progressive accumulation, read
 Generate a geometry cross-section sketch at wizard dump time
 (`gprmax-skill wizard dump <session> --sketch <out.png>`) so the user sees the
 domain, host medium, target at depth, and Tx/Rx before any mesh exists. The
-dump also accepts `--report <model-card.md>`; prefer the standalone
-`gprmax-skill report model-card <contract> --probe <probe.json> --out <study>/model_card.md` command as the
-canonical model card, since it carries the environment probe. The dump writes a
+dump also accepts `--report <model-card.md>`, but prefer the standalone
+`gprmax-skill report model-card` command as the canonical model card, since it
+carries the environment probe; its full invocation is given below. The dump writes a
 session payload, not the final contract: promote its `contract_draft` block
 into the study's `simulation_contract.yaml`, then record the factor levels and
 invariants there and confirm it validates against
@@ -205,15 +208,16 @@ class requires; interpret every check through that vocabulary before
 interpreting any gate report or signing a claim. On branches that ran the
 guided setup, map the wizard fidelity intent
 (quick / standard / publication) to the `F0`–`F5` ladder: quick → `F1`–`F2`,
-standard → `F3`, publication → `F4`–`F5`; on branches that audit or compare
-existing results, derive the fidelity intent from the study's recorded contract
-or evidence instead. Promotion is **fail-closed**:
+standard → `F3`, publication → `F4`–`F5`; on every branch that did not run the
+guided setup (Audit existing outputs, SFCW claim, Compare results), derive the
+fidelity intent from the study's recorded contract or evidence instead. Promotion is **fail-closed**:
 a blocked or stale gate stops promotion; an upstream change invalidates
 downstream evidence to `STALE` until revalidated. Record any fidelity
 promotion through `gprmax-skill promote <level> --project-root <study>` (exit
-code 2 on a blocked or unjustified promotion). Before the first promotion, seed
-the fidelity ledger once by writing `{"current": "F0"}` to
-`<study>/gates/fidelity.json` — the command reads that file as its starting
+code 2 on a blocked or unjustified promotion). Before the first promotion the
+fidelity ledger must contain `{"current": "F0"}` in
+`<study>/gates/fidelity.json` — create it exactly as shown (or via the CLI's
+own initialization if available); the command reads that file as its starting
 level and otherwise blocks with `BLOCK_PROMOTION_STATE`. The gate check is
 complete when the fidelity intent is mapped to the `F0`–`F5` ladder, the
 fidelity ledger is seeded once (`{"current": "F0"}` in
@@ -252,9 +256,10 @@ reconstruction, run `gprmax-skill sfcw process <out> --band <lo>-<hi>
 [--chain {auto,raw_visual,standard,advanced,imaging,display_enhancement}] [--mode impulse_lti|broadband_deconvolution]` to produce the
 A-scan artifact and its parameter record; the declared processing chain is
 applied via `--chain`, and `--mode` still wins when both are given. When the
-model card is regenerated in §Process results for inspection, reuse the same
-`--chain` value applied here so the fixed-chain record matches the executed
-chain.
+model card is regenerated in §Process results for inspection, pass the same
+concrete `--chain` value applied here — resolve `auto` to the chain the
+`sfcw process` run actually executed — so the fixed-chain record matches the
+executed chain.
 Reconstruction is complete when the SFCW processing chain is declared, the
 source gate is run and its result (pass or blocking with sidecar) is preserved
 in the study package, and the reconstructed A-scan artifact with its parameter
