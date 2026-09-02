@@ -23,7 +23,7 @@ guided-setup interview answers yes to the SFCW question — that branch adds
 |--------|------|
 | New model | §Start with the local contract → §Follow the study directory convention → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches → §Audit outputs before interpreting them → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
 | New SFCW model | §Start with the local contract → §Follow the study directory convention → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches → §Audit outputs before interpreting them → §Reconstruct SFCW faithfully → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
-| Audit existing outputs | §Audit outputs before interpreting them → §Follow the study directory convention → §Respect fidelity and gate states → §Close the evidence package (include §Keep comparisons controlled when the audit covers a target/background pair or a reference comparison) |
+| Audit existing outputs | §Follow the study directory convention → §Audit outputs before interpreting them → §Respect fidelity and gate states → §Close the evidence package (include §Keep comparisons controlled when the audit covers a target/background pair or a reference comparison) |
 | SFCW claim | §Start with the local contract → §Follow the study directory convention → §Audit outputs before interpreting them → §Reconstruct SFCW faithfully → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package (include §Keep comparisons controlled when the claim rests on a target/background pair or a reference comparison) |
 | Compare results | §Audit outputs before interpreting them → §Keep comparisons controlled → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
 
@@ -41,9 +41,11 @@ claim-level contract — the design type (`single_variable` | `multi_factor`), t
 factor list, and every invariant held constant. Defer the schema-required
 technical fields (domain, mesh, material, geometry, source/receiver, boundary,
 time-window, precision, processing) to §Drive the model from a guided setup,
-which fills them from the wizard answers. The contract is complete when it
-validates against `schemas/simulation_contract.schema.json`, names a reference
-case and design type, and records every factor level and invariant.
+which fills them from the wizard answers. The claim-level contract is complete
+when it names a reference case and design type, and records every factor level
+and invariant. Schema validation is deferred to §Drive the model from a guided
+setup, which fills the technical fields and confirms the full contract
+validates against `schemas/simulation_contract.schema.json`.
 
 For new or changed geometry and solver settings, read
 [numerical-model-validity.md](references/numerical-model-validity.md).
@@ -58,8 +60,8 @@ GPU, memory, disk, Python version, gprMax presence — to inform the choice, and
 let the user decide local or server). Initialise a wizard session
 (`gprmax-skill wizard init <session>`), record each validated answer
 (`gprmax-skill wizard answer <session> <field> <value>`), correct an earlier
-answer with (`gprmax-skill wizard back <session> [--steps N]`), check progress
-with (`gprmax-skill wizard status <session>`), and resolve unknown material
+answer (`gprmax-skill wizard back <session> [--steps N]`), check progress
+(`gprmax-skill wizard status <session>`), and resolve unknown material
 parameters by researching literature and authoritative sources; present the
 researched options with the recommended choice marked, each carrying its
 provenance, and record material entries in the local material library only
@@ -89,12 +91,9 @@ invariants there and confirm it validates against
 capture the environment with `gprmax-skill probe --json > <probe.json>` and
 produce a model-card report
 (`gprmax-skill report model-card <contract> --probe <probe.json>`) that
-consolidates the contract and environment probe; refresh it later — after
-`gprmax-skill diagnose <contract> --json > <diagnose.json>` and
-`gprmax-skill sensitivity <contract> --json > <sensitivity.json>` have produced
-their findings (see §Validate before expensive execution) and the processing
-chain is fixed — with
-`--probe <probe.json> --diagnostics <diagnose.json> --sensitivity <sensitivity.json> --chain <raw_visual|standard|advanced|imaging|display_enhancement>`.
+consolidates the contract and environment probe; refresh it later once the
+diagnostics, sensitivity findings, and the fixed processing chain exist (see
+§Process results for inspection).
 The guided setup is complete when
 the user has confirmed the interview answers, the geometry sketch is generated,
 the `simulation_contract.yaml` validates against the schema, and the initial
@@ -110,7 +109,9 @@ and the status table.
 **Batch only after the model is established.** A new project must first
 complete the guided setup (contract with a declared dimension, resolved
 medium/target materials, and a frequency band) and run at least one single-case
-verification that produces auditable `.out` evidence. Run
+verification that produces auditable `.out` evidence: select one case from the
+prepared case list, run it through gprMax, and confirm the `.out` file is
+produced. Run
 `gprmax-skill dataset check-model --study <study>` to inspect readiness;
 `gprmax-skill dataset sample <param-space> --study <study> --force` skips the
 gate explicitly. The batch is
@@ -229,11 +230,13 @@ gate with the actual source array (or embed the source samples in the config's
 `source.samples`). A blocking source or SFCW policy result returns exit code 2
 and stops downstream processing evidence; preserve both the gate report and its
 processing-detail sidecar in the study package. For the packaged
-reconstruction, `gprmax-skill sfcw process <out> --band <lo>-<hi> [--mode
+reconstruction, `gprmax-skill sfcw process <out> --band <lo>-<hi> [--chain <chain>] [--mode
 impulse_lti|broadband_deconvolution]` produces the A-scan artifact and its
-parameter record. Reconstruction is complete when the SFCW processing chain is
-declared, the source gate is run, and its result (pass or blocking with
-sidecar) is preserved in the study package.
+parameter record; the processing chain chosen in §Process results is applied
+via `--chain`, and `--mode` still wins when both are given. Reconstruction is
+complete when the SFCW processing chain is declared, the source gate is run,
+and its result (pass or blocking with sidecar) is preserved in the study
+package.
 
 ## Match the metric to the claim
 
