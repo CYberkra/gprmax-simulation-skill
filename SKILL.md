@@ -80,17 +80,22 @@ research-need identification, and scene-template progressive accumulation, read
 Generate a geometry cross-section sketch at wizard dump time
 (`gprmax-skill wizard dump <session> --sketch <out.png>`) so the user sees the
 domain, host medium, target at depth, and Tx/Rx before any mesh exists. The
-dump writes a session payload, not the final contract: promote its
-`contract_draft` block into the study's `simulation_contract.yaml`, then record
-the factor levels and invariants there and confirm it validates against
+dump also accepts `--report <model-card.md>`; prefer the standalone
+`gprmax-skill report model-card <contract> --probe <probe.json>` below as the
+canonical model card, since it carries the environment probe. The dump writes a
+session payload, not the final contract: promote its `contract_draft` block
+into the study's `simulation_contract.yaml`, then record the factor levels and
+invariants there and confirm it validates against
 `schemas/simulation_contract.schema.json`. When the model is established,
 capture the environment with `gprmax-skill probe --json > <probe.json>` and
 produce a model-card report
 (`gprmax-skill report model-card <contract> --probe <probe.json>`) that
 consolidates the contract and environment probe; refresh it later — after
-`gprmax-skill diagnose <contract>` and `gprmax-skill sensitivity <contract>`
-have produced their findings and the processing chain is fixed — with
-`--diagnostics`, `--sensitivity`, `--chain`. The guided setup is complete when
+`gprmax-skill diagnose <contract> --json > <diagnose.json>` and
+`gprmax-skill sensitivity <contract> --json > <sensitivity.json>` have produced
+their findings and the processing chain is fixed — with
+`--diagnostics <diagnose.json> --sensitivity <sensitivity.json> --chain <raw_visual|standard|advanced|imaging|display_enhancement>`.
+The guided setup is complete when
 the user has confirmed the interview answers, the geometry sketch is generated,
 the `simulation_contract.yaml` validates against the schema, and the initial
 model-card report (contract + environment probe) is produced.
@@ -106,11 +111,15 @@ and the status table.
 complete the guided setup (contract with a declared dimension, resolved
 medium/target materials, and a frequency band) and run at least one single-case
 verification that produces auditable `.out` evidence. Run
-`gprmax-skill dataset check-model` to inspect readiness;
-`gprmax-skill dataset sample <param-space> --force` skips the gate explicitly. The batch is
+`gprmax-skill dataset check-model --study <study>` to inspect readiness;
+`gprmax-skill dataset sample <param-space> --study <study> --force` skips the
+gate explicitly. The batch is
 complete when the run queue is exhausted, every case has a recorded status, and
-the status table is written to the deliverable (`gprmax-skill dataset summary`
-writes `<study>/batch/summary.csv`) alongside the per-case log paths.
+the status table is written to the deliverable (`gprmax-skill dataset summary
+--study <study>` writes `<study>/batch/summary.csv` with case, status, output,
+and error columns) alongside the per-case logs under `<study>/logs/`.
+For a packed training-style dataset from completed cases, run
+`gprmax-skill dataset pack --study <study> --band <lo>-<hi>`.
 
 ## Process results for inspection
 
@@ -176,9 +185,12 @@ standard → `F3`, publication → `F4`–`F5`. Promotion is **fail-closed**:
 a blocked or stale gate stops promotion; an upstream change invalidates
 downstream evidence to `STALE` until revalidated. Record any fidelity
 promotion through `gprmax-skill promote <level> --project-root <study>` (exit
-code 2 on a blocked or unjustified promotion). The gate check is complete
-when every gate state is interpreted against the `F0`–`F5` ladder and any
-blocked or stale result is recorded with its effect on the claim.
+code 2 on a blocked or unjustified promotion). Before the first promotion, seed
+the fidelity ledger once by writing `{"current": "F0"}` to
+`<study>/gates/fidelity.json` — the command reads that file as its starting
+level and otherwise blocks with `BLOCK_PROMOTION_STATE`. The gate check is
+complete when every gate state is interpreted against the `F0`–`F5` ladder and
+any blocked or stale result is recorded with its effect on the claim.
 
 ## Audit outputs before interpreting them
 
@@ -205,9 +217,12 @@ Before promoting an SFCW processing result, run the packaged
 gate with the actual source array (or embed the source samples in the config's
 `source.samples`). A blocking source or SFCW policy result returns exit code 2
 and stops downstream processing evidence; preserve both the gate report and its
-processing-detail sidecar in the study package. Reconstruction is complete when
-the SFCW processing chain is declared, the source gate is run, and its result
-(pass or blocking with sidecar) is preserved in the study package.
+processing-detail sidecar in the study package. For the packaged
+reconstruction, `gprmax-skill sfcw process <out> --band <lo>-<hi> [--mode
+impulse_lti|broadband_deconvolution]` produces the A-scan artifact and its
+parameter record. Reconstruction is complete when the SFCW processing chain is
+declared, the source gate is run, and its result (pass or blocking with
+sidecar) is preserved in the study package.
 
 ## Match the metric to the claim
 

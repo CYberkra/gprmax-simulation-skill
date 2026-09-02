@@ -561,10 +561,12 @@ def _parser() -> argparse.ArgumentParser:
     diag_cmd = commands.add_parser("diagnose")
     diag_cmd.add_argument("contract", type=Path)
     diag_cmd.add_argument("--gpu-vram-gb", type=float, default=None)
+    diag_cmd.add_argument("--json", action="store_true", dest="as_json")
 
     sens_cmd = commands.add_parser("sensitivity")
     sens_cmd.add_argument("contract", type=Path)
     sens_cmd.add_argument("--perturbation", type=float, default=0.2)
+    sens_cmd.add_argument("--json", action="store_true", dest="as_json")
 
     lcmd = commands.add_parser("layout")
     lsub = lcmd.add_subparsers(dest="layout_command", required=True)
@@ -950,7 +952,10 @@ def _diagnose(args: argparse.Namespace) -> int:
     except (ValueError, ContractError, OSError, yaml.YAMLError) as error:
         print(f"BLOCK {error}", file=sys.stderr)
         return 2
-    print(diagnose.render_diagnostics(findings))
+    if getattr(args, "as_json", False):
+        print(json.dumps([f.to_dict() for f in findings], ensure_ascii=False))
+    else:
+        print(diagnose.render_diagnostics(findings))
     blocking = any(f.severity == "BLOCK" for f in findings)
     return 2 if blocking else 0
 
@@ -1055,10 +1060,13 @@ def _sensitivity(args: argparse.Namespace) -> int:
     except (ValueError, ContractError, OSError, yaml.YAMLError) as error:
         print(f"BLOCK {error}", file=sys.stderr)
         return 2
-    print(sensitivity.render_sensitivity(results))
-    print("\n最敏感参数: " + ", ".join(
-        f"{item.parameter}" for item in sensitivity.rank_most_sensitive(results)
-    ))
+    if getattr(args, "as_json", False):
+        print(json.dumps([r.to_dict() for r in results], ensure_ascii=False))
+    else:
+        print(sensitivity.render_sensitivity(results))
+        print("\n最敏感参数: " + ", ".join(
+            f"{item.parameter}" for item in sensitivity.rank_most_sensitive(results)
+        ))
     return 0
 
 

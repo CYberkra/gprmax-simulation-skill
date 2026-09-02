@@ -208,3 +208,14 @@ def test_sensitivity_uses_contract_domain():
     big_vram = next(r for r in big if r.check == "vram_fp64_gb")
     small_vram = next(r for r in small if r.check == "vram_fp64_gb")
     assert big_vram.base_metric > small_vram.base_metric
+
+def test_to_dict_roundtrip_diagnose_and_sensitivity():
+    """to_dict output feeds report model-card --diagnostics/--sensitivity."""
+    diag = diagnose.diagnose_model(_contract())
+    for d in diag:
+        keys = set(d.to_dict())
+        assert {"check", "severity", "message"}.issubset(keys)
+    results = sensitivity.analyse_sensitivity(_contract())
+    for r in results:
+        keys = set(r.to_dict())
+        assert {"parameter", "check", "relative_change"}.issubset(keys)
