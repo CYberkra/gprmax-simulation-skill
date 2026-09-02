@@ -2,8 +2,7 @@
 name: gprmax-simulation
 description: >-
   Use when building a new gprMax model, auditing existing simulation outputs,
-  making SFCW-equivalent claims, or comparing controlled cases; route generic
-  GPR presentation to a presentation skill.
+  making SFCW-equivalent claims, or comparing controlled cases.
 ---
 
 # gprMax Simulation
@@ -36,7 +35,7 @@ supplied case materials; they can define project-specific requirements. Keep
 those values scoped to this project rather than carrying them elsewhere.
 
 Work **claim-first**: identify the reference case, the scientific question, the
-permitted claim, and the study design: a single-variable study with one factor,
+permitted claim, and the study design — a single-variable study with one factor,
 or a multi-factor design with a factor list. read
 [simulation-contract.md](references/simulation-contract.md), then record the
 full contract — the factors, their levels, and every invariant held constant,
@@ -59,7 +58,9 @@ needed, fidelity intent, and the run environment (probe the local environment �
 GPU, memory, disk, Python version, gprMax presence — to inform the choice, and
 let the user decide local or server). Initialise a wizard session
 (`gprmax-skill wizard init <session>`), record each validated answer
-(`gprmax-skill wizard answer <session> <field> <value>`), and resolve unknown material
+(`gprmax-skill wizard answer <session> <field> <value>`), correct an earlier
+answer with (`gprmax-skill wizard back <session> [--steps N]`), check progress
+with (`gprmax-skill wizard status <session>`), and resolve unknown material
 parameters by researching literature and authoritative sources; present the
 researched options with the recommended choice marked, each carrying its
 provenance, and record material entries in the local material library only
@@ -104,7 +105,8 @@ verification that produces auditable `.out` evidence. Run
 `gprmax-skill dataset check-model` to inspect readiness;
 `gprmax-skill dataset sample <param-space> --force` skips the gate explicitly. The batch is
 complete when the run queue is exhausted, every case has a recorded status, and
-the status table is delivered.
+the status table is written to a deliverable file (for example
+`results/batch_status.csv`) alongside the per-case log paths.
 
 ## Process results for inspection
 
@@ -113,7 +115,8 @@ B-scan. Recommend a processing chain matched to the question; read
 [preflight-and-audit.md](references/preflight-and-audit.md) for the chain
 categories, display-only discipline, and the user-priority rule. Processing is
 complete when the chain is chosen, its parameters recorded, and the artifact is
-delivered with the figure labelling required by §Close the evidence package.
+delivered with every time/distance figure carrying its coordinate datum,
+propagation convention, exact processing chain, and scope of validity.
 
 ## Keep comparisons controlled
 
@@ -187,7 +190,7 @@ For SFCW work, read [source-and-sfcw.md](references/source-and-sfcw.md). It
 covers source support, exact-tone extraction, source deconvolution, background
 handling, frequency grids, inverse transforms, and envelope construction.
 Before promoting an SFCW processing result, run the packaged
-`gprmax-skill validate-source <config.json> --project-root <study> --source-array <source.npy>`
+`gprmax-skill validate-source <config.json> --project-root <study> --source-array <source.npy> [--source-key <array_name>]`
 gate with the actual source array (or embed the source samples in the config's
 `source.samples`). A blocking source or SFCW policy result returns exit code 2
 and stops downstream processing evidence; preserve both the gate report and its
@@ -224,8 +227,9 @@ in the study README. Create a new dated directory for a materially changed
 model; keep frozen packages frozen.
 
 Scaffold a new study with `gprmax-skill init <study-dir> --name <study_id>`.
-Run `gprmax-skill layout audit <study-dir>` before scaffolding or auditing a
-study. The directory check is complete when the study layout matches the
+Run `gprmax-skill layout audit <study-dir>` after `init` to verify the
+scaffold, or before modifying an existing study to check its current state.
+The directory check is complete when the study layout matches the
 standard, the layout audit passes, and any intentional change is recorded in the
 README.
 
@@ -234,8 +238,9 @@ README.
 read [preflight-and-audit.md](references/preflight-and-audit.md#deliverable-contents) for the deliverable set, then preserve it in the study package.
 Every reported time or distance figure must state its coordinate datum,
 propagation/range-mapping convention, exact processing chain, and scope of
-validity. Present a background-subtracted residual as a residual, with the
-subtraction operator and raw data identified; keep raw field measurements
-and calibrated hardware results separate. The evidence package is complete when
+validity. Keep raw solver output, physically calibrated or conditioned data,
+and display-only products as separate artifacts; present a
+background-subtracted residual as a residual, with the subtraction operator and
+raw data identified. The evidence package is complete when
 the deliverable set defined in the reference above is present and every reported
 figure carries the required labeling.
