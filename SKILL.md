@@ -54,9 +54,9 @@ needed, fidelity intent, and the run environment. Resolve unknown material
 parameters by researching literature and authoritative sources; present options
 with recommended, compromise, and not-recommended choices plus provenance, and
 record material entries in the local material library only after user
-confirmation. For each configuration axis (antenna, SFCW, dispersion, noise and
-clutter targets, target geometry, model dimension, precision) recommend a value
-with a fold-open rationale, then generate a geometry sketch and the
+confirmation. For each configuration axis (antenna, SFCW, dispersion, model noise,
+target geometry, model dimension, numerical precision) recommend a value with a
+fold-open rationale, then generate a geometry sketch and the
 `simulation_contract.yaml` skeleton for confirmation.
 
 Probe the local environment (GPU, memory, disk, Python version, gprMax
@@ -101,8 +101,10 @@ Raw gprMax outputs usually need processing before they are readable as A-scan /
 B-scan. Recommend a processing chain matched to the question; read
 [preflight-and-audit.md](references/preflight-and-audit.md) for the chain
 categories, display-only discipline, and the user-priority rule. Processing is
-complete when the chain is chosen, its parameters recorded, and the labeled
-artifact delivered per §Close the evidence package.
+complete when the chain is chosen, its parameters recorded, and the artifact is
+delivered with the required labeling: coordinate datum, propagation/range-mapping
+convention, exact processing chain, and scope of validity (see §Close the
+evidence package for the full deliverable set).
 
 ## Keep comparisons controlled
 
@@ -140,8 +142,8 @@ geometry/configuration tests pass or are waived with recorded authority.
 
 ## Respect fidelity and gate states
 
-Interpret every check through the shared gate vocabulary in
-[gates-and-claims.md](references/gates-and-claims.md). Promotion is
+read [gates-and-claims.md](references/gates-and-claims.md) and interpret every
+check through the shared gate vocabulary. Promotion is
 **fail-closed**: a blocked or stale gate stops promotion; an upstream change
 invalidates downstream evidence to `STALE` until revalidated.
 
@@ -154,7 +156,7 @@ recorded with its effect on the claim.
 
 ## Audit outputs before interpreting them
 
-Read [preflight-and-audit.md](references/preflight-and-audit.md) for the HDF5
+read [preflight-and-audit.md](references/preflight-and-audit.md) for the HDF5
 output audit procedure (dataset existence, dtype, shape, timestep, sample count,
 and manifest reconciliation). Missing, duplicate, truncated, stale, or unmapped
 outputs are audit failures, not analysable results. The audit is complete when
