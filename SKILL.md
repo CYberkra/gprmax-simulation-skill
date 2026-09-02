@@ -13,6 +13,9 @@ model and the recorded processing chain that produced it.
 
 ## Route
 
+Sections are reference modules; follow the path for your branch rather than the
+file order.
+
 | Branch | Path |
 |--------|------|
 | New model | §Start with the local contract → §Follow the study directory convention → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches (if sweep) → §Process results for inspection → §Respect fidelity and gate states → §Close the evidence package |
@@ -91,22 +94,20 @@ verification that produces auditable ``.out`` evidence. Run
 `gprmax-skill dataset check-model` to inspect readiness;
 `gprmax-skill dataset sample --force` skips the gate explicitly. The batch is
 complete when the run queue is exhausted, every case has a recorded status, and
-the status table is delivered. See
+the status table is delivered. Read
 [preflight-and-audit.md](references/preflight-and-audit.md) for batch-run
 procedures and failure classification.
 
 ## Process results for inspection
 
 gprMax raw outputs usually need processing to be visibly informative as A-scan /
-B-scan. Recommend a processing chain matched to the question (raw display,
-standard chain, advanced deconvolution/windowing/envelope, optional imaging,
-display-only enhancement) and keep display enhancement separate from
-quantitative metrics; adopt the user's explicit choice when one is given. Record
-the chain parameters for reproducibility. The processed
-result (A-scan, B-scan, or figure) is the artifact; label it per §Close the
-evidence package before delivering. See
-[preflight-and-audit.md](references/preflight-and-audit.md) for
-processing-chain categories and display-only discipline.
+B-scan. Recommend a processing chain matched to the question; read
+[preflight-and-audit.md](references/preflight-and-audit.md) for the chain
+categories, display-only discipline, and the user-priority rule. Keep display
+enhancement separate from quantitative metrics, and record the chain parameters
+for reproducibility. Processing is complete when the chain is chosen, its
+parameters recorded, and the labeled artifact delivered per §Close the evidence
+package.
 
 ## Keep comparisons controlled
 
@@ -122,7 +123,7 @@ Reuse an intact, audited compatible run instead of spending compute to rerun it.
 If an output is missing, corrupt, stale, or cannot be reconciled with its input,
 record the limitation and obtain authority before requesting replacement compute.
 The comparison is complete when the factor(s) and every retained control are
-stated, and every compared pair matches on the invariants above. See
+stated, and every compared pair matches on the invariants above. Read
 [simulation-contract.md](references/simulation-contract.md) for the
 controlled-pair contract format and pair-compatibility rules.
 
@@ -153,7 +154,9 @@ result as invalid until it is revalidated.
 A claim licenses only the fidelity it earns — read
 [gates-and-claims.md](references/gates-and-claims.md) for the `F0`–`F5` ladder
 and the minimum fidelity each claim class requires before interpreting any gate
-report or signing a claim.
+report or signing a claim. The gate check is complete when every gate state is
+interpreted against the `F0`–`F5` ladder and any blocked or stale result is
+recorded with its effect on the claim.
 
 ## Audit outputs before interpreting them
 
@@ -205,7 +208,9 @@ supports it; use declared energy/envelope metrics for amplitude separability.
 
 Read [interpretation-and-claims.md](references/interpretation-and-claims.md)
 before making detection, resolution, thickness, inversion, or system-performance
-claims.
+claims. Metric selection is complete when the metric is declared, the chain is
+frozen, and the metric's scope (detection, localization, resolution, thickness)
+is stated and matched to the claim.
 
 ## Follow the study directory convention
 
@@ -218,7 +223,9 @@ README. Create a new dated directory for a materially changed model; keep frozen
 packages frozen.
 
 Run `gprmax-skill layout audit <study-dir>` before scaffolding or auditing a
-study.
+study. The directory check is complete when the study layout matches the
+standard, the layout audit passes, and any intentional change is recorded in the
+README.
 
 ## Close the evidence package
 
