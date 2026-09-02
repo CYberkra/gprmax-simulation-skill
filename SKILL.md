@@ -1,6 +1,6 @@
 ---
 name: gprmax-simulation
-description: Plan, build, run, reconstruct, and audit reproducible gprMax FDTD simulations, including SFCW or broadband-to-SFCW-equivalent GPR studies. Use for gprMax model changes, controlled sweeps, GPU-run preparation, output audit, SFCW reconstruction, or defensible detection/resolution/thickness claims. Do not use for generic GPR presentation work unrelated to gprMax cases or outputs.
+description: Plan, build, run, reconstruct, and audit reproducible gprMax FDTD simulations, including SFCW or broadband-to-SFCW-equivalent GPR studies. Use for gprMax model changes, controlled sweeps, GPU-run preparation, output audit, SFCW reconstruction, or defensible detection/resolution/thickness claims on gprMax cases or outputs; route generic GPR presentation to a presentation skill.
 metadata:
   short-description: Reproducible gprMax and SFCW simulation workflow
 ---
@@ -12,15 +12,24 @@ audited outputs and bounded conclusions. Preserve solver physics and evidence;
 do not let a visually persuasive plot replace a controlled model or a recorded
 processing chain.
 
+## Route
+
+| Branch | Path |
+|--------|------|
+| New model | §Start with the local contract → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches (if sweep) → §Respect fidelity and gate states → §Close the evidence package |
+| Audit existing outputs | §Audit outputs before interpreting them → §Keep comparisons controlled → §Respect fidelity and gate states → §Close the evidence package |
+| SFCW claim | §Start with the local contract → §Reconstruct SFCW faithfully → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
+| Compare results | §Keep comparisons controlled → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
+
 ## Start with the local contract
 
 Read the repository's `AGENTS.md`, study README, and supplied case materials
 before changing a model. They can define project-specific requirements; do not
 turn those local values into universal defaults.
 
-Identify the reference case, the scientific question, the permitted claim, and
-the study design: a single-variable study with one factor, or a multi-factor
-design with a factor list. Record the factors and their levels and every
+Work **claim-first**: identify the reference case, the scientific question, the
+permitted claim, and the study design: a single-variable study with one factor,
+or a multi-factor design with a factor list. Record the factors and their levels and every
 invariant held constant, plus the design type (`single_variable` |
 `multi_factor`). Record the domain, mesh, material and dispersion
 models, target geometry, source/receiver configuration, boundaries, time
@@ -85,7 +94,9 @@ B-scan. Recommend a processing chain matched to the question (raw display,
 standard chain, advanced deconvolution/windowing/envelope, optional imaging,
 display-only enhancement) and keep display enhancement separate from
 quantitative metrics. When the user specifies a processing choice, follow the
-user's request. Record the chain parameters for reproducibility.
+user's request. Record the chain parameters for reproducibility. The processed
+result (A-scan, B-scan, or figure) is the artifact; label it per §Close the
+evidence package before delivering.
 
 ## Keep comparisons controlled
 
@@ -120,9 +131,9 @@ substitute a different precision or model.
 Interpret every check through the shared gate vocabulary:
 `PASS` / `PASS_WITH_LIMITATION` / `BLOCK` / `STALE` / `NOT_APPLICABLE` for
 gates, and `UNVERIFIED` / `CONDITIONAL` / `VERIFIED` / `REJECTED` / `STALE` for
-claims. A blocked or stale gate stops promotion; an upstream change invalidates
-downstream evidence to `STALE` until revalidated. Never treat a stale result as
-current.
+claims. Promotion is **fail-closed**: a blocked or stale gate stops promotion; an
+upstream change invalidates downstream evidence to `STALE` until revalidated.
+Never treat a stale result as current.
 
 Claims license only the fidelity they earn: `F0` analytic sanity, `F1` minimal
 numerical physics, `F2` reduced-dimensional propagation, `F3` simplified 3-D,
@@ -183,9 +194,9 @@ Maintain a standard directory layout: `README.md`, `simulation_contract.yaml`,
 `manifest.json`, `materials/`, `waveforms/`, `cases/`, `scripts/`, `tests/`,
 `logs/`, `outputs/` (read-only raw evidence), `analysis/`, `results/`, and
 `evidence/`. Name study directories with a date and key parameters
-(`01_20260830_SFCW_SLIDE_WET`). Never silently change physical parameters;
-record every intentional change in the study README. Create a new dated
-directory for a materially changed model; do not modify frozen packages.
+(`01_20260830_SFCW_SLIDE_WET`). Record every intentional change in the study
+README. Create a new dated directory for a materially changed model; do not
+modify frozen packages.
 
 Read [study-layout.md](references/study-layout.md) for the full layout, naming
 conventions, discipline rules, and the `gprmax-skill layout audit` check before
@@ -197,5 +208,6 @@ Preserve raw outputs, inputs, generated geometry or its deterministic generator,
 materials, manifests, run logs, audit results, analysis code, figures/tables,
 and a concise result record. Every reported time or distance figure states its
 coordinate datum, propagation/range-mapping convention, exact processing chain,
-and scope of validity. Do not present a controlled background-subtracted
-residual as a raw field measurement or a calibrated hardware result.
+and scope of validity. Present a background-subtracted residual as a residual,
+with the subtraction operator and raw data identified; keep raw field measurements
+and calibrated hardware results separate.
