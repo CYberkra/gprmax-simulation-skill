@@ -14,13 +14,14 @@ model and the recorded processing chain that produced it.
 
 ## Route
 
-Sections contain work steps and reference material; follow the path for your
-branch in order and do not skip individual completion criteria.
+Follow the path for your branch in order, completing each section's completion
+criterion before moving on.
 
 | Branch | Path |
 |--------|------|
 | New model | §Start with the local contract → §Follow the study directory convention → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches → §Audit outputs before interpreting them → §Process results for inspection → §Respect fidelity and gate states → §Close the evidence package |
-| Audit existing outputs | §Audit outputs before interpreting them → §Follow the study directory convention → §Keep comparisons controlled → §Respect fidelity and gate states → §Close the evidence package |
+| New SFCW model | §Start with the local contract → §Follow the study directory convention → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches → §Audit outputs before interpreting them → §Reconstruct SFCW faithfully → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
+| Audit existing outputs | §Audit outputs before interpreting them → §Follow the study directory convention → §Respect fidelity and gate states → §Close the evidence package (include §Keep comparisons controlled when the audit covers a target/background pair or a reference comparison) |
 | SFCW claim | §Start with the local contract → §Follow the study directory convention → §Audit outputs before interpreting them → §Reconstruct SFCW faithfully → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
 | Compare results | §Audit outputs before interpreting them → §Keep comparisons controlled → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
 | Generic GPR presentation | route to a presentation skill — not covered here |
@@ -33,9 +34,10 @@ those values scoped to this project rather than carrying them elsewhere.
 
 Work **claim-first**: identify the reference case, the scientific question, the
 permitted claim, and the study design: a single-variable study with one factor,
-or a multi-factor design with a factor list. Record the full contract per
-[simulation-contract.md](references/simulation-contract.md) — the factors, their
-levels, and every invariant held constant, plus the design type
+or a multi-factor design with a factor list. read
+[simulation-contract.md](references/simulation-contract.md), then record the
+full contract — the factors, their levels, and every invariant held constant,
+plus the design type
 (`single_variable` | `multi_factor`) and every domain, mesh, material,
 geometry, source/receiver, boundary, time-window, precision, and processing
 field the schema requires. The contract is complete when it validates against
@@ -72,14 +74,15 @@ research-need identification, and scene-template progressive accumulation, read
 Generate a geometry cross-section sketch at wizard dump time
 (`gprmax-skill wizard dump <session> --sketch <out.png>`) so the user sees the
 domain, host medium, target at depth, and Tx/Rx before any mesh exists. When
-the model is established, produce a model-card report
-(`gprmax-skill report model-card <contract>`) that consolidates the contract
-and environment probe; refresh it later (with `--diagnostics`, `--sensitivity`,
-`--chain`) once §Validate, §Process results, and §Respect fidelity have
-produced the gate and chain inputs it consolidates. The guided setup is
-complete when the user has confirmed the interview answers, the geometry sketch
-is generated, and the initial model-card report (contract + environment probe)
-is produced.
+the model is established, capture the environment with
+`gprmax-skill probe --json <probe.json>` and produce a model-card report
+(`gprmax-skill report model-card <contract> --probe <probe.json>`) that
+consolidates the contract and environment probe; refresh it later (with
+`--diagnostics`, `--sensitivity`, `--chain`) once §Validate, §Process results,
+and §Respect fidelity have produced the gate and chain inputs it consolidates.
+The guided setup is complete when the user has confirmed the interview answers,
+the geometry sketch is generated, and the initial model-card report (contract +
+environment probe) is produced.
 
 ## Run controlled batches
 
@@ -104,7 +107,9 @@ B-scan. Recommend a processing chain matched to the question; read
 [preflight-and-audit.md](references/preflight-and-audit.md) for the chain
 categories, display-only discipline, and the user-priority rule. Processing is
 complete when the chain is chosen, its parameters recorded, and the artifact is
-delivered with the required labeling defined in §Close the evidence package.
+delivered with the required labeling (coordinate datum, range-mapping
+convention, processing chain, scope of validity — see §Close the evidence
+package).
 
 ## Keep comparisons controlled
 
@@ -176,13 +181,13 @@ For SFCW work, read [source-and-sfcw.md](references/source-and-sfcw.md). It
 covers source support, exact-tone extraction, source deconvolution, background
 handling, frequency grids, inverse transforms, and envelope construction.
 Before promoting an SFCW processing result, run the packaged
-`gprmax-skill validate-source <config.json> --project-root <study>` gate with
-the actual source array. A blocking source or SFCW policy result returns exit
-code 2 and stops downstream processing evidence; preserve both the gate report
-and its processing-detail sidecar in the study package. Reconstruction is
-complete when the SFCW processing chain is declared, the source gate is run,
-and its result (pass or blocking with sidecar) is preserved in the study
-package.
+`gprmax-skill validate-source <config.json> --project-root <study> --source-array <source.npy>`
+gate with the actual source array (or embed the source samples in the config's
+`source.samples`). A blocking source or SFCW policy result returns exit code 2
+and stops downstream processing evidence; preserve both the gate report and its
+processing-detail sidecar in the study package. Reconstruction is complete when
+the SFCW processing chain is declared, the source gate is run, and its result
+(pass or blocking with sidecar) is preserved in the study package.
 
 ## Match the metric to the claim
 
@@ -207,8 +212,8 @@ is stated and matched to the claim.
 
 ## Follow the study directory convention
 
-Maintain the standard directory layout and naming conventions defined in
-[study-layout.md](references/study-layout.md). Record every intentional change
+read [study-layout.md](references/study-layout.md) for the standard directory
+layout and naming conventions, then maintain them. Record every intentional change
 in the study README. Create a new dated directory for a materially changed
 model; keep frozen packages frozen.
 
@@ -219,8 +224,7 @@ README.
 
 ## Close the evidence package
 
-Preserve the deliverable set defined in
-[preflight-and-audit.md](references/preflight-and-audit.md#deliverable-contents).
+read [preflight-and-audit.md](references/preflight-and-audit.md#deliverable-contents) for the deliverable set, then preserve it in the study package.
 Every reported time or distance figure must state its coordinate datum,
 propagation/range-mapping convention, exact processing chain, and scope of
 validity. Present a background-subtracted residual as a residual, with the
