@@ -67,11 +67,12 @@ research-need identification, and scene-template progressive accumulation, read
 [study-materials.md](references/study-materials.md).
 
 Generate a geometry cross-section sketch at wizard dump time
-(`gprmax-skill wizard dump --sketch <out.png>`) so the user sees the domain, host medium,
-target at depth, and Tx/Rx before any mesh exists. When the model is
-established, produce a model-card report (`gprmax-skill report model-card <contract>`) that
-consolidates the contract, numerical gates, sensitivity, processing chain, and
-environment into a single deliverable.
+(`gprmax-skill wizard dump --sketch <out.png>`) so the user sees the domain,
+host medium, target at depth, and Tx/Rx before any mesh exists. When the model
+is established, produce a model-card report
+(`gprmax-skill report model-card <contract>`) that consolidates the contract,
+numerical gates, sensitivity, processing chain, and environment into a single
+deliverable.
 
 ## Run controlled batches
 
@@ -85,8 +86,9 @@ live progress view.
 **Batch only after the model is established.** A new project must first
 complete the guided setup (contract with a declared dimension, resolved
 medium/target materials, and a frequency band) and run at least one single-case
-verification that produces auditable ``.out`` evidence. Run ``gprmax-skill dataset check-model``
-to inspect readiness; ``gprmax-skill dataset sample --force`` skips the gate explicitly.
+verification that produces auditable ``.out`` evidence. Run
+``gprmax-skill dataset check-model`` to inspect readiness;
+``gprmax-skill dataset sample --force`` skips the gate explicitly.
 
 ## Process results for inspection
 
@@ -94,9 +96,8 @@ gprMax raw outputs usually need processing to be visibly informative as A-scan /
 B-scan. Recommend a processing chain matched to the question (raw display,
 standard chain, advanced deconvolution/windowing/envelope, optional imaging,
 display-only enhancement) and keep display enhancement separate from
-quantitative metrics. Recommend a processing chain matched to the question; adopt
-the user's explicit choice when one is given. Record the chain parameters for
-reproducibility. The processed
+quantitative metrics; adopt the user's explicit choice when one is given. Record
+the chain parameters for reproducibility. The processed
 result (A-scan, B-scan, or figure) is the artifact; label it per §Close the
 evidence package before delivering.
 
