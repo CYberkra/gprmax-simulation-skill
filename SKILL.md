@@ -1,6 +1,6 @@
 ---
 name: gprmax-simulation
-description: Plan, build, run, reconstruct, and audit reproducible gprMax FDTD simulations, including SFCW or broadband-to-SFCW-equivalent GPR studies. Use for building or running gprMax cases and sweeps, auditing existing outputs, SFCW reconstruction, controlled comparisons, or defensible detection/resolution/thickness claims on gprMax cases or outputs; route generic GPR presentation to a presentation skill.
+description: Run gprMax FDTD simulations. Use for building a new model, auditing existing outputs, making SFCW-equivalent claims, or comparing controlled cases; route generic GPR presentation to a presentation skill.
 metadata:
   short-description: Reproducible gprMax and SFCW simulation workflow
 ---
@@ -8,9 +8,8 @@ metadata:
 # gprMax Simulation
 
 Use this skill to keep a gprMax study traceable from physical assumptions to
-audited outputs and bounded conclusions. Preserve solver physics and evidence;
-anchor every plot in the controlled model and the recorded processing chain that
-produced it.
+audited outputs and bounded conclusions: anchor every plot in the controlled
+model and the recorded processing chain that produced it.
 
 ## Route
 
@@ -18,7 +17,7 @@ produced it.
 |--------|------|
 | New model | §Start with the local contract → §Follow the study directory convention → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches (if sweep) → §Process results for inspection → §Respect fidelity and gate states → §Close the evidence package |
 | Audit existing outputs | §Audit outputs before interpreting them → §Follow the study directory convention → §Keep comparisons controlled → §Respect fidelity and gate states → §Close the evidence package |
-| SFCW claim | §Start with the local contract → §Audit outputs before interpreting them → §Reconstruct SFCW faithfully → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
+| SFCW claim | §Start with the local contract → §Follow the study directory convention → §Audit outputs before interpreting them → §Reconstruct SFCW faithfully → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
 | Compare results | §Audit outputs before interpreting them → §Keep comparisons controlled → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
 
 ## Start with the local contract
@@ -72,7 +71,9 @@ host medium, target at depth, and Tx/Rx before any mesh exists. When the model
 is established, produce a model-card report
 (`gprmax-skill report model-card <contract>`) that consolidates the contract,
 numerical gates, sensitivity, processing chain, and environment into a single
-deliverable.
+deliverable. The guided setup is complete when the user has confirmed the
+interview answers, the geometry sketch is generated, and the model-card report
+is delivered.
 
 ## Run controlled batches
 
@@ -87,8 +88,12 @@ live progress view.
 complete the guided setup (contract with a declared dimension, resolved
 medium/target materials, and a frequency band) and run at least one single-case
 verification that produces auditable ``.out`` evidence. Run
-``gprmax-skill dataset check-model`` to inspect readiness;
-``gprmax-skill dataset sample --force`` skips the gate explicitly.
+`gprmax-skill dataset check-model` to inspect readiness;
+`gprmax-skill dataset sample --force` skips the gate explicitly. The batch is
+complete when the run queue is exhausted, every case has a recorded status, and
+the status table is delivered. See
+[preflight-and-audit.md](references/preflight-and-audit.md) for batch-run
+procedures and failure classification.
 
 ## Process results for inspection
 
@@ -99,7 +104,9 @@ display-only enhancement) and keep display enhancement separate from
 quantitative metrics; adopt the user's explicit choice when one is given. Record
 the chain parameters for reproducibility. The processed
 result (A-scan, B-scan, or figure) is the artifact; label it per §Close the
-evidence package before delivering.
+evidence package before delivering. See
+[preflight-and-audit.md](references/preflight-and-audit.md) for
+processing-chain categories and display-only discipline.
 
 ## Keep comparisons controlled
 
@@ -114,6 +121,10 @@ and validate the resampling before use.
 Reuse an intact, audited compatible run instead of spending compute to rerun it.
 If an output is missing, corrupt, stale, or cannot be reconciled with its input,
 record the limitation and obtain authority before requesting replacement compute.
+The comparison is complete when the factor(s) and every retained control are
+stated, and every compared pair matches on the invariants above. See
+[simulation-contract.md](references/simulation-contract.md) for the
+controlled-pair contract format and pair-compatibility rules.
 
 ## Validate before expensive execution
 
@@ -127,24 +138,22 @@ Before GPU execution, prepare a manifest and case list. Record the command,
 solver version/build, requested precision, GPU mapping, case order, and log
 paths. Confirm that the selected build and allocated hardware support the
 requested calculation. Stop on a repeated simulation error and report it; change
-precision or model only with recorded authority.
+precision or model only with recorded authority. Validation is complete when
+the discretised dimensions are reported, the manifest is prepared, and any
+geometry/configuration tests pass or are waived with recorded authority.
 
 ## Respect fidelity and gate states
 
-Interpret every check through the shared gate vocabulary:
-`PASS` / `PASS_WITH_LIMITATION` / `BLOCK` / `STALE` / `NOT_APPLICABLE` for
-gates, and `UNVERIFIED` / `CONDITIONAL` / `VERIFIED` / `REJECTED` / `STALE` for
-claims. Promotion is **fail-closed**: a blocked or stale gate stops promotion; an
-upstream change invalidates downstream evidence to `STALE` until revalidated.
-Treat a stale result as invalid until it is revalidated.
+Interpret every check through the shared gate vocabulary in
+[gates-and-claims.md](references/gates-and-claims.md). Promotion is
+**fail-closed**: a blocked or stale gate stops promotion; an upstream change
+invalidates downstream evidence to `STALE` until revalidated. Treat a stale
+result as invalid until it is revalidated.
 
-Claims license only the fidelity they earn: `F0` analytic sanity, `F1` minimal
-numerical physics, `F2` reduced-dimensional propagation, `F3` simplified 3-D,
-`F4` high-fidelity 3-D physical model, `F5` calibrated hardware/system closure.
-Sign-off requires the claim's minimum fidelity (for example engineering
-detection needs `F5`, physical resolution needs `F4`). Read
-[gates-and-claims.md](references/gates-and-claims.md) before interpreting any
-gate report or signing a claim.
+A claim licenses only the fidelity it earns — read
+[gates-and-claims.md](references/gates-and-claims.md) for the `F0`–`F5` ladder
+and the minimum fidelity each claim class requires before interpreting any gate
+report or signing a claim.
 
 ## Audit outputs before interpreting them
 
@@ -155,7 +164,9 @@ environment, and output path/checksum. Missing, duplicate, truncated, stale, or
 unmapped outputs are audit failures, not analysable results.
 
 Use [preflight-and-audit.md](references/preflight-and-audit.md) for the manifest
-and HDF5 audit details.
+and HDF5 audit details. The audit is complete when every expected output is
+reconciled against its manifest entry, and any missing/corrupt/unmapped output
+is recorded as an audit failure.
 
 ## Reconstruct SFCW faithfully
 
@@ -172,12 +183,17 @@ Before promoting an SFCW processing result, run the packaged
 `gprmax-skill validate-source <config.json> --project-root <study>` gate with
 the actual source array. A blocking source or SFCW policy result returns exit
 code 2 and stops downstream processing evidence; preserve both the gate report
-and its processing-detail sidecar in the study package.
+and its processing-detail sidecar in the study package. Reconstruction is
+complete when the SFCW processing chain is declared, the source gate is run,
+and its result (pass or blocking with sidecar) is preserved in the study
+package.
 
 ## Match the metric to the claim
 
-Keep raw, physically calibrated, and display-only products separate. Freeze the
-processing chain and metric definition before comparative evaluation. A peak,
+Work **claim-first** here too: the metric must answer the claim it was
+declared for. Keep raw, physically calibrated, and display-only products
+separate. Freeze the processing chain and metric definition before comparative
+evaluation. A peak,
 envelope valley, -3 dB width, detection statistic, localization estimate,
 two-interface separation, and thickness estimate answer different questions;
 none automatically proves another.
@@ -193,24 +209,25 @@ claims.
 
 ## Follow the study directory convention
 
-Maintain a standard directory layout: `README.md`, `simulation_contract.yaml`,
-`manifest.json`, `materials/`, `waveforms/`, `cases/`, `scripts/`, `tests/`,
-`logs/`, `outputs/` (read-only raw evidence), `analysis/`, `results/`, and
-`evidence/`. Name study directories with a date and key parameters
-(`01_20260830_SFCW_SLIDE_WET`). Record every intentional change in the study
+Maintain the standard directory layout and naming conventions defined in
+[study-layout.md](references/study-layout.md) — `README.md`,
+`simulation_contract.yaml`, `manifest.json`, `materials/`, `waveforms/`,
+`cases/`, `scripts/`, `tests/`, `logs/`, `outputs/`, `analysis/`,
+`results/`, and `evidence/`. Record every intentional change in the study
 README. Create a new dated directory for a materially changed model; keep frozen
 packages frozen.
 
-Read [study-layout.md](references/study-layout.md) for the full layout, naming
-conventions, discipline rules, and the `gprmax-skill layout audit` check before
-scaffolding or auditing a study.
+Run `gprmax-skill layout audit <study-dir>` before scaffolding or auditing a
+study.
 
 ## Close the evidence package
 
-Preserve raw outputs, inputs, generated geometry or its deterministic generator,
-materials, manifests, run logs, audit results, analysis code, figures/tables,
-and a concise result record. Every reported time or distance figure states its
-coordinate datum, propagation/range-mapping convention, exact processing chain,
-and scope of validity. Present a background-subtracted residual as a residual,
-with the subtraction operator and raw data identified; keep raw field measurements
-and calibrated hardware results separate.
+Preserve the deliverable set defined in
+[preflight-and-audit.md](references/preflight-and-audit.md#deliverable-contents).
+Every reported time or distance figure must state its coordinate datum,
+propagation/range-mapping convention, exact processing chain, and scope of
+validity. Present a background-subtracted residual as a residual, with the
+subtraction operator and raw data identified; keep raw field measurements
+and calibrated hardware results separate. The evidence package is complete when
+the deliverable set defined in the reference above is present and every reported
+figure carries the required labeling.
