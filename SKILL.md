@@ -19,15 +19,15 @@ file order.
 
 | Branch | Path |
 |--------|------|
-| New model | §Start with the local contract → §Follow the study directory convention → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches (if sweep) → §Audit outputs before interpreting them → §Process results for inspection → §Respect fidelity and gate states → §Close the evidence package |
+| New model | §Start with the local contract → §Follow the study directory convention → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches → §Audit outputs before interpreting them → §Process results for inspection → §Respect fidelity and gate states → §Close the evidence package |
 | Audit existing outputs | §Audit outputs before interpreting them → §Follow the study directory convention → §Keep comparisons controlled → §Respect fidelity and gate states → §Close the evidence package |
 | SFCW claim | §Start with the local contract → §Follow the study directory convention → §Audit outputs before interpreting them → §Reconstruct SFCW faithfully → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
 | Compare results | §Audit outputs before interpreting them → §Keep comparisons controlled → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
 
 ## Start with the local contract
 
-Read the repository's `AGENTS.md`, study README, and supplied case materials
-before changing a model. They can define project-specific requirements; keep
+Before changing a model, read the repository's `AGENTS.md`, study README, and
+supplied case materials; they can define project-specific requirements. Keep
 those values scoped to this project rather than carrying them elsewhere.
 
 Work **claim-first**: identify the reference case, the scientific question, the
@@ -42,7 +42,6 @@ field the schema requires. The contract is complete when it validates against
 type, and records every factor level and invariant.
 
 For new or changed geometry and solver settings, read
-[simulation-contract.md](references/simulation-contract.md) and
 [numerical-model-validity.md](references/numerical-model-validity.md).
 
 ## Drive the model from a guided setup
@@ -51,12 +50,13 @@ When the user wants to build a new model type, run the guided setup before
 writing any input: interview the user to establish the scenario, target and
 surrounding medium, frequency band and whether an SFCW-equivalent conclusion is
 needed, fidelity intent, and the run environment. Resolve unknown material
-parameters by researching literature and authoritative sources; present options
-with recommended, compromise, and not-recommended choices plus provenance, and
-record material entries in the local material library only after user
-confirmation. For each configuration axis (antenna, SFCW, dispersion, model noise,
-target geometry, model dimension, numerical precision) recommend a value with a
-fold-open rationale, then generate a geometry sketch and the
+parameters by researching literature and authoritative sources; present the
+researched options with the recommended choice marked, each carrying its
+provenance, and record material entries in the local material library only
+after user confirmation. For each configuration axis (antenna, SFCW
+equivalent, dispersion, model noise, target geometry, numerical precision,
+model dimension) recommend a value with a fold-open rationale, then generate a
+geometry sketch and the
 `simulation_contract.yaml` skeleton for confirmation.
 
 Probe the local environment (GPU, memory, disk, Python version, gprMax
@@ -71,13 +71,14 @@ research-need identification, and scene-template progressive accumulation, read
 
 Generate a geometry cross-section sketch at wizard dump time
 (`gprmax-skill wizard dump <session> --sketch <out.png>`) so the user sees the
-domain, host medium, target at depth, and Tx/Rx before any mesh exists. When the model
-is established, produce a model-card report
-(`gprmax-skill report model-card <contract>`) that consolidates the contract,
-numerical gates, sensitivity, processing chain, and environment into a single
-deliverable. The guided setup is complete when the user has confirmed the
-interview answers, the geometry sketch is generated, and the model-card report
-is delivered.
+domain, host medium, target at depth, and Tx/Rx before any mesh exists. When
+the model is established, produce a model-card report
+(`gprmax-skill report model-card <contract>`) that consolidates the contract
+and environment probe; refresh it later (with `--diagnostics`, `--sensitivity`,
+`--chain`) once §Validate, §Process results, and §Respect fidelity have
+produced the gate and chain inputs it consolidates. The guided setup is
+complete when the user has confirmed the interview answers and the geometry
+sketch is generated.
 
 ## Run controlled batches
 
@@ -109,10 +110,10 @@ delivered with the required labeling defined in §Close the evidence package.
 For a controlled comparison, state the factor(s) and every retained
 control. A target-present/background pair must match in domain, mesh, retained
 materials, source/receiver configuration, waveform, time window, boundary
-treatment, and precision. Compare only outputs with identically defined
-receiver observables. Complex subtraction (for example background subtraction)
-requires matching sampling grids; any comparison that resamples must declare
-and validate the resampling before use.
+treatment, precision, and processing convention. Compare only outputs with
+identically defined receiver observables. Complex subtraction (for example
+background subtraction) requires matching sampling grids; any comparison that
+resamples must declare and validate the resampling before use.
 
 Reuse an intact, audited compatible run instead of spending compute to rerun it.
 If an output is missing, corrupt, stale, or cannot be reconciled with its input,
@@ -124,8 +125,12 @@ controlled-pair contract format and pair-compatibility rules.
 
 ## Validate before expensive execution
 
-Align critical dimensions, sources, receivers, and interfaces to the mesh and
-report the discretised dimensions as cell counts times cell spacings. Declare and
+read [numerical-model-validity.md](references/numerical-model-validity.md) and
+[preflight-and-audit.md](references/preflight-and-audit.md) for the
+mesh-alignment, precision-feasibility, and manifest/execution-record
+requirements below. Align critical dimensions, sources, receivers, and
+interfaces to the mesh and report the discretised dimensions as cell counts
+times cell spacings. Declare and
 record every change to physical properties, geometry, source/receiver placement,
 waveform, boundary treatment, or precision. Run focused geometry/configuration
 checks when provided; keep costly gprMax execution outside unit tests.
@@ -140,17 +145,14 @@ geometry/configuration tests pass or are waived with recorded authority.
 
 ## Respect fidelity and gate states
 
-read [gates-and-claims.md](references/gates-and-claims.md) and interpret every
-check through the shared gate vocabulary. Promotion is
-**fail-closed**: a blocked or stale gate stops promotion; an upstream change
-invalidates downstream evidence to `STALE` until revalidated.
-
-A claim licenses only the fidelity it earns — read
-[gates-and-claims.md](references/gates-and-claims.md) for the `F0`–`F5` ladder
-and the minimum fidelity each claim class requires before interpreting any gate
-report or signing a claim. The gate check is complete when every gate state is
-interpreted against the `F0`–`F5` ladder and any blocked or stale result is
-recorded with its effect on the claim.
+read [gates-and-claims.md](references/gates-and-claims.md) for the shared gate
+vocabulary, the `F0`–`F5` fidelity ladder, and the minimum fidelity each claim
+class requires; interpret every check through that vocabulary before
+interpreting any gate report or signing a claim. Promotion is **fail-closed**:
+a blocked or stale gate stops promotion; an upstream change invalidates
+downstream evidence to `STALE` until revalidated. The gate check is complete
+when every gate state is interpreted against the `F0`–`F5` ladder and any
+blocked or stale result is recorded with its effect on the claim.
 
 ## Audit outputs before interpreting them
 
@@ -158,9 +160,8 @@ read [preflight-and-audit.md](references/preflight-and-audit.md) for the HDF5
 output audit procedure (dataset existence, dtype, shape, timestep, sample count,
 and manifest reconciliation). Missing, duplicate, truncated, stale, or unmapped
 outputs are audit failures, not analysable results. The audit is complete when
-every expected output is reconciled against its manifest entry, and any missing,
-duplicate, truncated, stale, or unmapped output is recorded as an audit
-failure.
+every expected output is reconciled against its manifest entry and each audit
+failure above is recorded.
 
 ## Reconstruct SFCW faithfully
 
