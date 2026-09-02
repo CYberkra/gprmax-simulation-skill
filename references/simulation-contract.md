@@ -61,29 +61,9 @@ and recorded hash make regeneration auditable.
 
 ## Study directory convention
 
-Maintain a standard directory layout:
-
-```
-<study_id>/
-├── README.md               study purpose, frozen parameters, change log
-├── simulation_contract.yaml
-├── manifest.json           case list, hashes, precision, status, checksums
-├── materials/              material definitions (or references to global library)
-├── waveforms/              impulse / custom excitation files
-├── cases/                  .in input files
-├── scripts/                generation, validation, analysis scripts
-├── tests/                  pytest geometry checks
-├── logs/                   per-case run logs
-├── outputs/                raw .out — immutable, read-only
-├── analysis/               processing chain code and intermediates
-├── results/                final figures, tables, summaries
-└── evidence/               audit reports, manifest copies, hashes
-```
-
-Name study directories with a date and key parameters
-(`01_20260830_SFCW_SLIDE_WET`). Case IDs use uppercase underscores
-(`SLIDE_WET_H1_T007`). Never silently change physical parameters; record every
-intentional change in the study README.
+Maintain the standard directory layout and naming conventions defined in
+[study-layout.md](study-layout.md). Never silently change physical parameters;
+record every intentional change in the study README.
 
 ## Material library
 
