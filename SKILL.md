@@ -15,13 +15,13 @@ model and the recorded processing chain that produced it.
 
 Follow the path for your branch in order, completing each section's completion
 criterion before moving on. Pick `New SFCW model` (not `New model`) when the
-request calls for a stepped-frequency or SFCW-system conclusion, or when the
+request calls for a stepped-frequency or SFCW-equivalent conclusion, or when the
 guided-setup interview answers yes to the SFCW question — that branch adds
 §Reconstruct SFCW faithfully and §Match the metric to the claim.
 
 | Branch | Path |
 |--------|------|
-| New model | §Start with the local contract → §Follow the study directory convention → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches → §Audit outputs before interpreting them → §Process results for inspection → §Respect fidelity and gate states → §Close the evidence package |
+| New model | §Start with the local contract → §Follow the study directory convention → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches → §Audit outputs before interpreting them → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
 | New SFCW model | §Start with the local contract → §Follow the study directory convention → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches → §Audit outputs before interpreting them → §Reconstruct SFCW faithfully → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
 | Audit existing outputs | §Audit outputs before interpreting them → §Follow the study directory convention → §Respect fidelity and gate states → §Close the evidence package (include §Keep comparisons controlled when the audit covers a target/background pair or a reference comparison) |
 | SFCW claim | §Start with the local contract → §Follow the study directory convention → §Audit outputs before interpreting them → §Reconstruct SFCW faithfully → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
@@ -77,19 +77,23 @@ intents), read
 research-need identification, and scene-template progressive accumulation, read
 [study-materials.md](references/study-materials.md).
 
-Generate a geometry cross-section sketch and the contract skeleton at wizard
-dump time (`gprmax-skill wizard dump <session> --sketch <out.png> --out
-simulation_contract.yaml`) so the user sees the domain, host medium, target at
-depth, and Tx/Rx before any mesh exists. When
-the model is established, capture the environment with
-`gprmax-skill probe --json > <probe.json>` and produce a model-card report
+Generate a geometry cross-section sketch at wizard dump time
+(`gprmax-skill wizard dump <session> --sketch <out.png>`) so the user sees the
+domain, host medium, target at depth, and Tx/Rx before any mesh exists. The
+dump writes a session payload, not the final contract: promote its
+`contract_draft` block into the study's `simulation_contract.yaml`, then record
+the factor levels and invariants there and confirm it validates against
+`schemas/simulation_contract.schema.json`. When the model is established,
+capture the environment with `gprmax-skill probe --json > <probe.json>` and
+produce a model-card report
 (`gprmax-skill report model-card <contract> --probe <probe.json>`) that
-consolidates the contract and environment probe; refresh it later (with
-`--diagnostics`, `--sensitivity`, `--chain`) once §Validate, §Process results,
-and §Respect fidelity have produced the gate and chain inputs it consolidates.
-The guided setup is complete when the user has confirmed the interview answers,
-the geometry sketch is generated, and the initial model-card report (contract +
-environment probe) is produced.
+consolidates the contract and environment probe; refresh it later — after
+`gprmax-skill diagnose <contract>` and `gprmax-skill sensitivity <contract>`
+have produced their findings and the processing chain is fixed — with
+`--diagnostics`, `--sensitivity`, `--chain`. The guided setup is complete when
+the user has confirmed the interview answers, the geometry sketch is generated,
+the `simulation_contract.yaml` validates against the schema, and the initial
+model-card report (contract + environment probe) is produced.
 
 ## Run controlled batches
 
@@ -105,8 +109,8 @@ verification that produces auditable `.out` evidence. Run
 `gprmax-skill dataset check-model` to inspect readiness;
 `gprmax-skill dataset sample <param-space> --force` skips the gate explicitly. The batch is
 complete when the run queue is exhausted, every case has a recorded status, and
-the status table is written to a deliverable file (for example
-`results/batch_status.csv`) alongside the per-case log paths.
+the status table is written to the deliverable (`gprmax-skill dataset summary`
+writes `<study>/batch/summary.csv`) alongside the per-case log paths.
 
 ## Process results for inspection
 
@@ -150,11 +154,16 @@ checks when provided; keep costly gprMax execution outside unit tests.
 
 Before GPU execution, prepare a manifest and case list. Record the command,
 solver version/build, requested precision, GPU mapping, case order, and log
-paths. Confirm that the selected build and allocated hardware support the
-requested calculation. Stop on a repeated simulation error and report it; change
-precision or model only with recorded authority. Validation is complete when
-the discretised dimensions are reported, the manifest is prepared, and any
-geometry/configuration tests pass or are waived with recorded authority.
+paths. Run the fail-closed model gates (`gprmax-skill preflight <contract>
+--project-root <study>`) and confirm the `gates/preflight.json` report has no
+`BLOCK` or `STALE` result; a blocked gate stops execution until the cause is
+repaired and the gate rerun. Confirm that the selected build and allocated
+hardware support the requested calculation. Stop on a repeated simulation error
+and report it; change precision or model only with recorded authority.
+Validation is complete when the discretised dimensions are reported, the
+manifest is prepared, the preflight gate report is recorded with no blocked or
+stale result, and any geometry/configuration tests pass or are waived with
+recorded authority.
 
 ## Respect fidelity and gate states
 
@@ -165,7 +174,9 @@ interpreting any gate report or signing a claim. Map the wizard fidelity intent
 (quick / standard / publication) to the `F0`–`F5` ladder: quick → `F1`–`F2`,
 standard → `F3`, publication → `F4`–`F5`. Promotion is **fail-closed**:
 a blocked or stale gate stops promotion; an upstream change invalidates
-downstream evidence to `STALE` until revalidated. The gate check is complete
+downstream evidence to `STALE` until revalidated. Record any fidelity
+promotion through `gprmax-skill promote <level> --project-root <study>` (exit
+code 2 on a blocked or unjustified promotion). The gate check is complete
 when every gate state is interpreted against the `F0`–`F5` ladder and any
 blocked or stale result is recorded with its effect on the claim.
 
@@ -236,11 +247,8 @@ README.
 ## Close the evidence package
 
 read [preflight-and-audit.md](references/preflight-and-audit.md#deliverable-contents) for the deliverable set, then preserve it in the study package.
-Every reported time or distance figure must state its coordinate datum,
-propagation/range-mapping convention, exact processing chain, and scope of
-validity. Keep raw solver output, physically calibrated or conditioned data,
-and display-only products as separate artifacts; present a
-background-subtracted residual as a residual, with the subtraction operator and
-raw data identified. The evidence package is complete when
-the deliverable set defined in the reference above is present and every reported
-figure carries the required labeling.
+Every reported figure carries the labeling required by §Process results for
+inspection. Present a background-subtracted residual as a residual, with the
+subtraction operator and raw data identified. The evidence package is complete
+when the deliverable set defined in the reference above is present and the
+labeling rule above holds.
