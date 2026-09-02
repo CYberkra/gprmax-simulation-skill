@@ -17,7 +17,7 @@ Follow the path for your branch in order, completing each section's completion
 criterion before moving on. Pick `New SFCW model` (not `New model`) when the
 request calls for a stepped-frequency or SFCW-equivalent conclusion, or when the
 guided-setup interview answers yes to the SFCW question — that branch adds
-§Reconstruct SFCW faithfully and §Match the metric to the claim.
+§Reconstruct SFCW faithfully.
 
 | Branch | Path |
 |--------|------|
@@ -37,13 +37,13 @@ Work **claim-first**: identify the reference case, the scientific question, the
 permitted claim, and the study design — a single-variable study with one factor,
 or a multi-factor design with a factor list. read
 [simulation-contract.md](references/simulation-contract.md), then record the
-full contract — the factors, their levels, and every invariant held constant,
-plus the design type
-(`single_variable` | `multi_factor`) and every domain, mesh, material,
-geometry, source/receiver, boundary, time-window, precision, and processing
-field the schema requires. The contract is complete when it validates against
-`schemas/simulation_contract.schema.json`, names a reference case and design
-type, and records every factor level and invariant.
+claim-level contract — the design type (`single_variable` | `multi_factor`), the
+factor list, and every invariant held constant. Defer the schema-required
+technical fields (domain, mesh, material, geometry, source/receiver, boundary,
+time-window, precision, processing) to §Drive the model from a guided setup,
+which fills them from the wizard answers. The contract is complete when it
+validates against `schemas/simulation_contract.schema.json`, names a reference
+case and design type, and records every factor level and invariant.
 
 For new or changed geometry and solver settings, read
 [numerical-model-validity.md](references/numerical-model-validity.md).
@@ -129,7 +129,11 @@ B-scan. Recommend a processing chain matched to the question; read
 categories, display-only discipline, and the user-priority rule. Processing is
 complete when the chain is chosen, its parameters recorded, and the artifact is
 delivered with every time/distance figure carrying its coordinate datum,
-propagation convention, exact processing chain, and scope of validity.
+propagation convention, exact processing chain, and scope of validity; then
+regenerate the model card as the fixed-chain record with
+`gprmax-skill report model-card <contract> --probe <probe.json> --diagnostics
+<diagnose.json> --sensitivity <sensitivity.json> --chain <chain>` and keep that
+card in the study package.
 
 ## Keep comparisons controlled
 
@@ -142,12 +146,12 @@ background subtraction) requires matching sampling grids; any comparison that
 resamples must declare and validate the resampling before use.
 
 Reuse an intact, audited compatible run instead of spending compute to rerun it.
-If an output is missing, corrupt, stale, or cannot be reconciled with its input,
-record the limitation and obtain authority before requesting replacement compute.
-The comparison is complete when the factor(s) and every retained control are
-stated, and every compared pair matches on the invariants above. read
-[simulation-contract.md](references/simulation-contract.md) for the
-controlled-pair contract format and pair-compatibility rules.
+read [simulation-contract.md](references/simulation-contract.md) for the
+controlled-pair contract format and pair-compatibility rules. If an output is
+missing, corrupt, stale, or cannot be reconciled with its input, record the
+limitation and obtain authority before requesting replacement compute. The
+comparison is complete when the factor(s) and every retained control are
+stated, and every compared pair matches on the invariants above.
 
 ## Validate before expensive execution
 
@@ -165,7 +169,8 @@ Before GPU execution, prepare a manifest and case list. Record the command,
 solver version/build, requested precision, GPU mapping, case order, and log
 paths. Run the fail-closed model gates (`gprmax-skill preflight <contract>
 --project-root <study>`) and confirm the `gates/preflight.json` report has no
-`BLOCK` or `STALE` result; a blocked gate stops execution until the cause is
+`BLOCK` or `STALE` result (read [gates-and-claims.md](references/gates-and-claims.md) for the
+gate-state vocabulary); a blocked gate stops execution until the cause is
 repaired and the gate rerun. Run the setup-time failure diagnostics before GPU
 execution — `gprmax-skill diagnose <contract> --gpu-vram-gb <GB> --json >
 <diagnose.json>` and `gprmax-skill sensitivity <contract> --json >
