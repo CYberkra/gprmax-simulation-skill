@@ -1,8 +1,9 @@
 ---
 name: gprmax-simulation
-description: Run gprMax FDTD simulations. Use for building a new model, auditing existing outputs, making SFCW-equivalent claims, or comparing controlled cases; route generic GPR presentation to a presentation skill.
-metadata:
-  short-description: Reproducible gprMax and SFCW simulation workflow
+description: >-
+  Use when building a new gprMax model, auditing existing simulation outputs,
+  making SFCW-equivalent claims, or comparing controlled cases; route generic
+  GPR presentation to a presentation skill.
 ---
 
 # gprMax Simulation
@@ -54,8 +55,8 @@ parameters by researching literature and authoritative sources; present options
 with recommended, compromise, and not-recommended choices plus provenance, and
 record material entries in the local material library only after user
 confirmation. For each configuration axis (antenna, SFCW, dispersion, noise and
-clutter targets, target geometry, mesh, precision) recommend a value with a
-fold-open rationale, then generate a geometry sketch and the
+clutter targets, target geometry, model dimension, precision) recommend a value
+with a fold-open rationale, then generate a geometry sketch and the
 `simulation_contract.yaml` skeleton for confirmation.
 
 Probe the local environment (GPU, memory, disk, Python version, gprMax
@@ -80,12 +81,10 @@ is delivered.
 
 ## Run controlled batches
 
-For a parameter scan, define dimensions in the contract or a CSV matrix, expand
-into cases, and validate every case (grid alignment, overlap, PML clearance,
-resolvable materials, numerical gates) before any run. Failed cases do not
-enter the run queue. Prefer the study's runner for execution; record per-case
-logs, support resume on existing outputs, and produce a status table with a
-live progress view.
+For a parameter scan, read
+[preflight-and-audit.md](references/preflight-and-audit.md) for the
+expand-validate-run-resume procedure, per-case logs, failure classification,
+and the status table.
 
 **Batch only after the model is established.** A new project must first
 complete the guided setup (contract with a declared dimension, resolved
@@ -94,20 +93,16 @@ verification that produces auditable ``.out`` evidence. Run
 `gprmax-skill dataset check-model` to inspect readiness;
 `gprmax-skill dataset sample --force` skips the gate explicitly. The batch is
 complete when the run queue is exhausted, every case has a recorded status, and
-the status table is delivered. Read
-[preflight-and-audit.md](references/preflight-and-audit.md) for batch-run
-procedures and failure classification.
+the status table is delivered.
 
 ## Process results for inspection
 
-gprMax raw outputs usually need processing to be visibly informative as A-scan /
+Raw gprMax outputs usually need processing before they are readable as A-scan /
 B-scan. Recommend a processing chain matched to the question; read
 [preflight-and-audit.md](references/preflight-and-audit.md) for the chain
-categories, display-only discipline, and the user-priority rule. Keep display
-enhancement separate from quantitative metrics, and record the chain parameters
-for reproducibility. Processing is complete when the chain is chosen, its
-parameters recorded, and the labeled artifact delivered per §Close the evidence
-package.
+categories, display-only discipline, and the user-priority rule. Processing is
+complete when the chain is chosen, its parameters recorded, and the labeled
+artifact delivered per §Close the evidence package.
 
 ## Keep comparisons controlled
 
@@ -148,8 +143,7 @@ geometry/configuration tests pass or are waived with recorded authority.
 Interpret every check through the shared gate vocabulary in
 [gates-and-claims.md](references/gates-and-claims.md). Promotion is
 **fail-closed**: a blocked or stale gate stops promotion; an upstream change
-invalidates downstream evidence to `STALE` until revalidated. Treat a stale
-result as invalid until it is revalidated.
+invalidates downstream evidence to `STALE` until revalidated.
 
 A claim licenses only the fidelity it earns — read
 [gates-and-claims.md](references/gates-and-claims.md) for the `F0`–`F5` ladder
@@ -160,16 +154,12 @@ recorded with its effect on the claim.
 
 ## Audit outputs before interpreting them
 
-Confirm the declared receiver dataset exists, is finite and nonempty, and has
-the expected dtype, shape, timestep, and sample count. Reconcile each output
-with its case identifier, input/configuration hash, run status, executable,
-environment, and output path/checksum. Missing, duplicate, truncated, stale, or
-unmapped outputs are audit failures, not analysable results.
-
-Use [preflight-and-audit.md](references/preflight-and-audit.md) for the manifest
-and HDF5 audit details. The audit is complete when every expected output is
-reconciled against its manifest entry, and any missing/corrupt/unmapped output
-is recorded as an audit failure.
+Read [preflight-and-audit.md](references/preflight-and-audit.md) for the HDF5
+output audit procedure (dataset existence, dtype, shape, timestep, sample count,
+and manifest reconciliation). Missing, duplicate, truncated, stale, or unmapped
+outputs are audit failures, not analysable results. The audit is complete when
+every expected output is reconciled against its manifest entry, and any
+missing/corrupt/unmapped output is recorded as an audit failure.
 
 ## Reconstruct SFCW faithfully
 
@@ -215,12 +205,9 @@ is stated and matched to the claim.
 ## Follow the study directory convention
 
 Maintain the standard directory layout and naming conventions defined in
-[study-layout.md](references/study-layout.md) — `README.md`,
-`simulation_contract.yaml`, `manifest.json`, `materials/`, `waveforms/`,
-`cases/`, `scripts/`, `tests/`, `logs/`, `outputs/`, `analysis/`,
-`results/`, and `evidence/`. Record every intentional change in the study
-README. Create a new dated directory for a materially changed model; keep frozen
-packages frozen.
+[study-layout.md](references/study-layout.md). Record every intentional change
+in the study README. Create a new dated directory for a materially changed
+model; keep frozen packages frozen.
 
 Run `gprmax-skill layout audit <study-dir>` before scaffolding or auditing a
 study. The directory check is complete when the study layout matches the

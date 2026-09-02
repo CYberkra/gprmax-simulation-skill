@@ -39,7 +39,7 @@ Rules:
 
 ## Configuration axes (`axes` module)
 
-Eight axes cover the choices a model needs. Every axis option carries a
+Seven axes cover the choices a model needs. Every axis option carries a
 recommendation basis; the agent presents the option set with the recommended
 option marked and lets the user confirm or override (user-specified choices
 always win).
@@ -51,10 +51,12 @@ always win).
 | Dispersion model | constant / Debye / Lorentz / Drude / measured complex | material research + band |
 | Model noise | none / AWGN (SNR/D) / clutter objects | whether noise/statistical analysis is needed; clutter list from scene research |
 | Target geometry | regular (box/cylinder) / irregular L1–L4 | avoiding coherent artifacts from flat interfaces + fidelity |
-| Grid strategy | recommended from the above: dx/dy/dz, PML layers | cells/λ ≥ 10 + time window + domain size |
 | Numerical precision | auto fp32/fp64 | required dynamic range vs. fp32 floor (≈ −90 dB) |
 | Model dimension | 2d / 2.5d / 3d | project stage + fidelity (see below) |
-| Run environment | local / server (multi-GPU) | user decision; probe informs only |
+
+Grid sizing (dx/dy/dz, PML layers) is derived from the axes above (cells/λ ≥ 10
++ time window + domain size); the run environment (local / server) is a user
+decision that the probe only informs. Neither is an axis.
 
 ### Model dimension and project stage
 
