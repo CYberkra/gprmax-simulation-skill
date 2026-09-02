@@ -14,8 +14,8 @@ model and the recorded processing chain that produced it.
 
 ## Route
 
-Sections are reference modules; follow the path for your branch rather than the
-file order.
+Sections contain work steps and reference material; follow the path for your
+branch in order and do not skip individual completion criteria.
 
 | Branch | Path |
 |--------|------|
@@ -23,6 +23,7 @@ file order.
 | Audit existing outputs | §Audit outputs before interpreting them → §Follow the study directory convention → §Keep comparisons controlled → §Respect fidelity and gate states → §Close the evidence package |
 | SFCW claim | §Start with the local contract → §Follow the study directory convention → §Audit outputs before interpreting them → §Reconstruct SFCW faithfully → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
 | Compare results | §Audit outputs before interpreting them → §Keep comparisons controlled → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
+| Generic GPR presentation | route to a presentation skill — not covered here |
 
 ## Start with the local contract
 
@@ -49,7 +50,9 @@ For new or changed geometry and solver settings, read
 When the user wants to build a new model type, run the guided setup before
 writing any input: interview the user to establish the scenario, target and
 surrounding medium, frequency band and whether an SFCW-equivalent conclusion is
-needed, fidelity intent, and the run environment. Resolve unknown material
+needed, fidelity intent, and the run environment (probe the local environment —
+GPU, memory, disk, Python version, gprMax presence — to inform the choice, and
+let the user decide local or server). Resolve unknown material
 parameters by researching literature and authoritative sources; present the
 researched options with the recommended choice marked, each carrying its
 provenance, and record material entries in the local material library only
@@ -58,9 +61,6 @@ equivalent, dispersion, model noise, target geometry, numerical precision,
 model dimension) recommend a value with a fold-open rationale, then generate a
 geometry sketch and the
 `simulation_contract.yaml` skeleton for confirmation.
-
-Probe the local environment (GPU, memory, disk, Python version, gprMax
-presence) to inform the choice, and let the user decide local or server.
 
 For the interview order, answer validation, and configuration-axis
 recommendations (including the L1–L4 irregular-geometry tiers and fidelity
@@ -77,8 +77,9 @@ the model is established, produce a model-card report
 and environment probe; refresh it later (with `--diagnostics`, `--sensitivity`,
 `--chain`) once §Validate, §Process results, and §Respect fidelity have
 produced the gate and chain inputs it consolidates. The guided setup is
-complete when the user has confirmed the interview answers and the geometry
-sketch is generated.
+complete when the user has confirmed the interview answers, the geometry sketch
+is generated, and the initial model-card report (contract + environment probe)
+is produced.
 
 ## Run controlled batches
 
@@ -92,7 +93,7 @@ complete the guided setup (contract with a declared dimension, resolved
 medium/target materials, and a frequency band) and run at least one single-case
 verification that produces auditable `.out` evidence. Run
 `gprmax-skill dataset check-model` to inspect readiness;
-`gprmax-skill dataset sample <space> --force` skips the gate explicitly. The batch is
+`gprmax-skill dataset sample <param-space> --force` skips the gate explicitly. The batch is
 complete when the run queue is exhausted, every case has a recorded status, and
 the status table is delivered.
 
@@ -125,12 +126,12 @@ controlled-pair contract format and pair-compatibility rules.
 
 ## Validate before expensive execution
 
-read [numerical-model-validity.md](references/numerical-model-validity.md) and
+read [numerical-model-validity.md](references/numerical-model-validity.md) for
+the mesh-alignment and precision-feasibility requirements below. read
 [preflight-and-audit.md](references/preflight-and-audit.md) for the
-mesh-alignment, precision-feasibility, and manifest/execution-record
-requirements below. Align critical dimensions, sources, receivers, and
-interfaces to the mesh and report the discretised dimensions as cell counts
-times cell spacings. Declare and
+manifest/execution-record requirements. Align critical dimensions, sources,
+receivers, and interfaces to the mesh and report the discretised dimensions as
+cell counts times cell spacings. Declare and
 record every change to physical properties, geometry, source/receiver placement,
 waveform, boundary treatment, or precision. Run focused geometry/configuration
 checks when provided; keep costly gprMax execution outside unit tests.
