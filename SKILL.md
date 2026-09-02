@@ -15,7 +15,10 @@ model and the recorded processing chain that produced it.
 ## Route
 
 Follow the path for your branch in order, completing each section's completion
-criterion before moving on.
+criterion before moving on. Pick `New SFCW model` (not `New model`) when the
+request calls for a stepped-frequency or SFCW-system conclusion, or when the
+guided-setup interview answers yes to the SFCW question — that branch adds
+§Reconstruct SFCW faithfully and §Match the metric to the claim.
 
 | Branch | Path |
 |--------|------|
@@ -54,7 +57,9 @@ writing any input: interview the user to establish the scenario, target and
 surrounding medium, frequency band and whether an SFCW-equivalent conclusion is
 needed, fidelity intent, and the run environment (probe the local environment —
 GPU, memory, disk, Python version, gprMax presence — to inform the choice, and
-let the user decide local or server). Resolve unknown material
+let the user decide local or server). Initialise a wizard session
+(`gprmax-skill wizard init <session>`), record each validated answer
+(`gprmax-skill wizard answer <session> <field> <value>`), and resolve unknown material
 parameters by researching literature and authoritative sources; present the
 researched options with the recommended choice marked, each carrying its
 provenance, and record material entries in the local material library only
@@ -71,11 +76,12 @@ intents), read
 research-need identification, and scene-template progressive accumulation, read
 [study-materials.md](references/study-materials.md).
 
-Generate a geometry cross-section sketch at wizard dump time
-(`gprmax-skill wizard dump <session> --sketch <out.png>`) so the user sees the
-domain, host medium, target at depth, and Tx/Rx before any mesh exists. When
+Generate a geometry cross-section sketch and the contract skeleton at wizard
+dump time (`gprmax-skill wizard dump <session> --sketch <out.png> --out
+simulation_contract.yaml`) so the user sees the domain, host medium, target at
+depth, and Tx/Rx before any mesh exists. When
 the model is established, capture the environment with
-`gprmax-skill probe --json <probe.json>` and produce a model-card report
+`gprmax-skill probe --json > <probe.json>` and produce a model-card report
 (`gprmax-skill report model-card <contract> --probe <probe.json>`) that
 consolidates the contract and environment probe; refresh it later (with
 `--diagnostics`, `--sensitivity`, `--chain`) once §Validate, §Process results,
@@ -107,9 +113,7 @@ B-scan. Recommend a processing chain matched to the question; read
 [preflight-and-audit.md](references/preflight-and-audit.md) for the chain
 categories, display-only discipline, and the user-priority rule. Processing is
 complete when the chain is chosen, its parameters recorded, and the artifact is
-delivered with the required labeling (coordinate datum, range-mapping
-convention, processing chain, scope of validity — see §Close the evidence
-package).
+delivered with the figure labelling required by §Close the evidence package.
 
 ## Keep comparisons controlled
 
@@ -154,7 +158,9 @@ geometry/configuration tests pass or are waived with recorded authority.
 read [gates-and-claims.md](references/gates-and-claims.md) for the shared gate
 vocabulary, the `F0`–`F5` fidelity ladder, and the minimum fidelity each claim
 class requires; interpret every check through that vocabulary before
-interpreting any gate report or signing a claim. Promotion is **fail-closed**:
+interpreting any gate report or signing a claim. Map the wizard fidelity intent
+(quick / standard / publication) to the `F0`–`F5` ladder: quick → `F1`–`F2`,
+standard → `F3`, publication → `F4`–`F5`. Promotion is **fail-closed**:
 a blocked or stale gate stops promotion; an upstream change invalidates
 downstream evidence to `STALE` until revalidated. The gate check is complete
 when every gate state is interpreted against the `F0`–`F5` ladder and any
@@ -191,7 +197,7 @@ the SFCW processing chain is declared, the source gate is run, and its result
 
 ## Match the metric to the claim
 
-Work **claim-first** here too: the metric must answer the claim it was
+Work **claim-first**: the metric must answer the claim it was
 declared for. Keep raw, physically calibrated, and display-only products
 separate. Freeze the processing chain and metric definition before comparative
 evaluation. A peak,
@@ -217,6 +223,7 @@ layout and naming conventions, then maintain them. Record every intentional chan
 in the study README. Create a new dated directory for a materially changed
 model; keep frozen packages frozen.
 
+Scaffold a new study with `gprmax-skill init <study-dir> --name <study_id>`.
 Run `gprmax-skill layout audit <study-dir>` before scaffolding or auditing a
 study. The directory check is complete when the study layout matches the
 standard, the layout audit passes, and any intentional change is recorded in the
