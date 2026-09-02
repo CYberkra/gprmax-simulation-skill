@@ -1,8 +1,9 @@
 ---
 name: gprmax-simulation
 description: >-
-  Use when building a new gprMax model, auditing existing simulation outputs,
-  making SFCW-equivalent claims, or comparing controlled cases.
+  Use when building a new gprMax model (including a stepped-frequency /
+  SFCW-equivalent study), auditing existing simulation outputs, making an
+  SFCW-equivalent claim on existing results, or comparing controlled cases.
 ---
 
 # gprMax Simulation
@@ -44,10 +45,12 @@ the wizard session promotes the contract draft). Defer the schema-required
 technical fields (domain, mesh, material, geometry, source/receiver, boundary,
 time-window, precision, processing) to §Drive the model from a guided setup,
 which fills them from the wizard answers. The claim-level contract is complete
-when it names a reference case and design type, and records every factor level
-and invariant. Schema validation is deferred to §Drive the model from a guided
-setup, which fills the technical fields and confirms the full contract
-validates against `schemas/simulation_contract.schema.json`.
+when it names a reference case and design type and every factor level and
+invariant is agreed with the user; writing them into `simulation_contract.yaml`
+is deferred to §Drive the model from a guided setup. Schema validation is
+deferred to §Drive the model from a guided setup, which fills the technical
+fields and confirms the full contract validates against
+`schemas/simulation_contract.schema.json`.
 
 ## Drive the model from a guided setup
 
@@ -128,15 +131,18 @@ For a packed training-style dataset from completed cases, run
 Raw gprMax outputs usually need processing before they are readable as A-scan /
 B-scan. Recommend a processing chain matched to the question; read
 [preflight-and-audit.md](references/preflight-and-audit.md) for the chain
-categories, display-only discipline, and the user-priority rule. Processing is
-complete when the chain is chosen, its parameters recorded, and the artifact is
-delivered with every time/distance figure carrying its coordinate datum,
-propagation convention, exact processing chain, and scope of validity; then
+categories, display-only discipline, and the user-priority rule. Deliver the
+artifact with every time/distance figure carrying its coordinate datum,
+propagation convention, exact processing chain, and scope of validity, then
 regenerate the model card as the fixed-chain record with
 `gprmax-skill report model-card <contract> --probe <probe.json> --chain <chain>`
 (also pass `--diagnostics <diagnose.json>` and `--sensitivity <sensitivity.json>`
-when they exist from the study's setup phase) and keep that
-card in the study package.
+when they exist from the study's setup phase; on branches that skip the guided
+setup, reuse the probe recorded in the study log or capture one first with
+`gprmax-skill probe --json > <probe.json>`) and keep that card in the study
+package. Processing is complete when the chain is chosen, its parameters
+recorded, the artifact is delivered with the labeling rule above, and the
+regenerated model card is kept in the study package.
 
 ## Keep comparisons controlled
 
@@ -204,8 +210,12 @@ code 2 on a blocked or unjustified promotion). Before the first promotion, seed
 the fidelity ledger once by writing `{"current": "F0"}` to
 `<study>/gates/fidelity.json` — the command reads that file as its starting
 level and otherwise blocks with `BLOCK_PROMOTION_STATE`. The gate check is
-complete when every gate state is interpreted against the `F0`–`F5` ladder and
-any blocked or stale result is recorded with its effect on the claim.
+complete when the fidelity intent is mapped to the `F0`–`F5` ladder, the
+fidelity ledger is seeded once (`{"current": "F0"}` in
+`<study>/gates/fidelity.json`) and every promotion is recorded through
+`gprmax-skill promote <level> --project-root <study>` (exit code 2 means
+blocked or unjustified), and every gate state — including any blocked or stale
+result — is interpreted with its effect on the claim recorded.
 
 ## Audit outputs before interpreting them
 
@@ -233,13 +243,14 @@ gate with the actual source array (or embed the source samples in the config's
 `source.samples`). A blocking source or SFCW policy result returns exit code 2
 and stops downstream processing evidence; preserve both the gate report and its
 processing-detail sidecar in the study package. For the packaged
-reconstruction, `gprmax-skill sfcw process <out> --band <lo>-<hi> [--chain <chain>] [--mode
-impulse_lti|broadband_deconvolution]` produces the A-scan artifact and its
-parameter record; the declared processing chain is applied via `--chain`, and
-`--mode` still wins when both are given. Reconstruction is
-complete when the SFCW processing chain is declared, the source gate is run,
-and its result (pass or blocking with sidecar) is preserved in the study
-package.
+reconstruction, run `gprmax-skill sfcw process <out> --band <lo>-<hi>
+[--chain <chain>] [--mode impulse_lti|broadband_deconvolution]` to produce the
+A-scan artifact and its parameter record; the declared processing chain is
+applied via `--chain`, and `--mode` still wins when both are given.
+Reconstruction is complete when the SFCW processing chain is declared, the
+source gate is run and its result (pass or blocking with sidecar) is preserved
+in the study package, and the reconstructed A-scan artifact with its parameter
+record is produced.
 
 ## Match the metric to the claim
 
@@ -273,16 +284,22 @@ model; keep frozen packages frozen.
 Scaffold a new study with `gprmax-skill init <study-dir> --name <study_id>`.
 Run `gprmax-skill layout audit <study-dir>` after `init` to verify the
 scaffold, or before modifying an existing study to check its current state.
+When the audit reports BLOCK findings on a frozen or legacy package that must
+not be altered, record each finding as a deviation in the audit/evidence
+rather than modifying the package, and proceed.
 The directory check is complete when the study layout matches the
-standard, the layout audit passes, and any intentional change is recorded in the
-README.
+standard, the layout audit passes (or, for a frozen or legacy package, every
+BLOCK finding is recorded as a deviation), and any intentional change is
+recorded in the README.
 
 ## Close the evidence package
 
-read [preflight-and-audit.md](references/preflight-and-audit.md#deliverable-contents) for the deliverable set, then preserve it in the study package.
-Every reported figure must state its coordinate datum, propagation convention,
-exact processing chain, and scope of validity. Present a background-subtracted
+read [preflight-and-audit.md](references/preflight-and-audit.md#deliverable-contents)
+for the deliverable set and the figure-labeling rule (coordinate datum,
+propagation convention, processing chain, scope of validity), then preserve it
+in the study package. Present a background-subtracted
 residual as a residual, with the subtraction operator and raw data identified.
-The evidence package is complete
+Record the claim state (UNVERIFIED / CONDITIONAL / VERIFIED / REJECTED) with
+its supporting evidence in the study package. The evidence package is complete
 when the deliverable set defined in the reference above is present and the
 labeling rule above holds.
