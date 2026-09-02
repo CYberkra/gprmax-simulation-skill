@@ -15,24 +15,28 @@ model and the recorded processing chain that produced it.
 ## Route
 
 Follow the path for your branch in order, completing each section's completion
-criterion before moving on. Pick `New SFCW model` (not `New model`) when the
-request calls for a stepped-frequency or SFCW-equivalent conclusion, or when the
-guided-setup interview answers yes to the SFCW question — that branch adds
-§Reconstruct SFCW faithfully.
+criterion before moving on. Sections are ordered by the `New model` path; other
+branches skip or reorder steps as shown below. Pick `New SFCW model` (not
+`New model`) when the
+request calls for a stepped-frequency or SFCW-equivalent conclusion — that
+branch adds §Reconstruct SFCW faithfully (the guided-setup interview in §Drive
+can also switch you to it mid-path).
 
 | Branch | Path |
 |--------|------|
 | New model | §Start with the local contract → §Follow the study directory convention → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches → §Audit outputs before interpreting them → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
 | New SFCW model | §Start with the local contract → §Follow the study directory convention → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches → §Audit outputs before interpreting them → §Reconstruct SFCW faithfully → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
-| Audit existing outputs | §Follow the study directory convention → §Audit outputs before interpreting them → §Respect fidelity and gate states → §Close the evidence package (include §Keep comparisons controlled when the audit covers a target/background pair or a reference comparison) |
-| SFCW claim | §Start with the local contract → §Follow the study directory convention → §Audit outputs before interpreting them → §Reconstruct SFCW faithfully → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package (include §Keep comparisons controlled when the claim rests on a target/background pair or a reference comparison) |
+| Audit existing outputs | §Follow the study directory convention → §Audit outputs before interpreting them → (include §Keep comparisons controlled when the audit covers a target/background pair or a reference comparison) → §Respect fidelity and gate states → §Close the evidence package |
+| SFCW claim | §Start with the local contract → §Follow the study directory convention → §Audit outputs before interpreting them → §Reconstruct SFCW faithfully → (include §Keep comparisons controlled when the claim rests on a target/background pair or a reference comparison) → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
 | Compare results | §Audit outputs before interpreting them → §Keep comparisons controlled → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
 
 ## Start with the local contract
 
 Before changing a model, read the repository's `AGENTS.md`, study README, and
 supplied case materials; they can define project-specific requirements. Keep
-those values scoped to this project rather than carrying them elsewhere.
+those values scoped to this project rather than carrying them elsewhere. (On
+the SFCW claim branch, skip the model-change reading but still establish the
+claim-level contract below.)
 
 Work **claim-first**: identify the reference case, the scientific question, the
 permitted claim, and the study design — a single-variable study with one factor,
@@ -45,9 +49,10 @@ the wizard session promotes the contract draft). Defer the schema-required
 technical fields (domain, mesh, material, geometry, source/receiver, boundary,
 time-window, precision, processing) to §Drive the model from a guided setup,
 which fills them from the wizard answers. The claim-level contract is complete
-when it names a reference case and design type and every factor level and
-invariant is agreed with the user; writing them into `simulation_contract.yaml`
-is deferred to §Drive the model from a guided setup. Schema validation is
+when it names a reference case, a scientific question, a permitted claim, and a
+design type, and every factor level and invariant is agreed with the user;
+writing them into `simulation_contract.yaml` is deferred to §Drive the model
+from a guided setup. Schema validation is
 deferred to §Drive the model from a guided setup, which fills the technical
 fields and confirms the full contract validates against
 `schemas/simulation_contract.schema.json`.
@@ -86,7 +91,7 @@ Generate a geometry cross-section sketch at wizard dump time
 (`gprmax-skill wizard dump <session> --sketch <out.png>`) so the user sees the
 domain, host medium, target at depth, and Tx/Rx before any mesh exists. The
 dump also accepts `--report <model-card.md>`; prefer the standalone
-`gprmax-skill report model-card <contract> --probe <probe.json>` below as the
+`gprmax-skill report model-card <contract> --probe <probe.json>` command as the
 canonical model card, since it carries the environment probe. The dump writes a
 session payload, not the final contract: promote its `contract_draft` block
 into the study's `simulation_contract.yaml`, then record the factor levels and
@@ -135,7 +140,7 @@ categories, display-only discipline, and the user-priority rule. Deliver the
 artifact with every time/distance figure carrying its coordinate datum,
 propagation convention, exact processing chain, and scope of validity, then
 regenerate the model card as the fixed-chain record with
-`gprmax-skill report model-card <contract> --probe <probe.json> --chain <chain>`
+`gprmax-skill report model-card <contract> --probe <probe.json> --chain {raw_visual,standard,advanced,imaging,display_enhancement}`
 (also pass `--diagnostics <diagnose.json>` and `--sensitivity <sensitivity.json>`
 when they exist from the study's setup phase; on branches that skip the guided
 setup, reuse the probe recorded in the study log or capture one first with
@@ -244,7 +249,7 @@ gate with the actual source array (or embed the source samples in the config's
 and stops downstream processing evidence; preserve both the gate report and its
 processing-detail sidecar in the study package. For the packaged
 reconstruction, run `gprmax-skill sfcw process <out> --band <lo>-<hi>
-[--chain <chain>] [--mode impulse_lti|broadband_deconvolution]` to produce the
+[--chain {auto,raw_visual,standard,advanced,imaging,display_enhancement}] [--mode impulse_lti|broadband_deconvolution]` to produce the
 A-scan artifact and its parameter record; the declared processing chain is
 applied via `--chain`, and `--mode` still wins when both are given.
 Reconstruction is complete when the SFCW processing chain is declared, the
@@ -271,8 +276,9 @@ supports it; use declared energy/envelope metrics for amplitude separability.
 read [interpretation-and-claims.md](references/interpretation-and-claims.md)
 before making detection, resolution, thickness, inversion, or system-performance
 claims. Metric selection is complete when the metric is declared, the chain is
-frozen, and the metric's scope (detection, localization, resolution, thickness)
-is stated and matched to the claim.
+frozen (or, on the Compare branch, verified consistent), and the metric's scope
+(detection, localization, resolution, thickness) is stated and matched to the
+claim.
 
 ## Follow the study directory convention
 
