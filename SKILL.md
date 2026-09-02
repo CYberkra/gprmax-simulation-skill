@@ -19,7 +19,7 @@ file order.
 
 | Branch | Path |
 |--------|------|
-| New model | §Start with the local contract → §Follow the study directory convention → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches (if sweep) → §Process results for inspection → §Respect fidelity and gate states → §Close the evidence package |
+| New model | §Start with the local contract → §Follow the study directory convention → §Drive the model from a guided setup → §Validate before expensive execution → §Run controlled batches (if sweep) → §Audit outputs before interpreting them → §Process results for inspection → §Respect fidelity and gate states → §Close the evidence package |
 | Audit existing outputs | §Audit outputs before interpreting them → §Follow the study directory convention → §Keep comparisons controlled → §Respect fidelity and gate states → §Close the evidence package |
 | SFCW claim | §Start with the local contract → §Follow the study directory convention → §Audit outputs before interpreting them → §Reconstruct SFCW faithfully → §Process results for inspection → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
 | Compare results | §Audit outputs before interpreting them → §Keep comparisons controlled → §Match the metric to the claim → §Respect fidelity and gate states → §Close the evidence package |
@@ -70,8 +70,8 @@ research-need identification, and scene-template progressive accumulation, read
 [study-materials.md](references/study-materials.md).
 
 Generate a geometry cross-section sketch at wizard dump time
-(`gprmax-skill wizard dump --sketch <out.png>`) so the user sees the domain,
-host medium, target at depth, and Tx/Rx before any mesh exists. When the model
+(`gprmax-skill wizard dump <session> --sketch <out.png>`) so the user sees the
+domain, host medium, target at depth, and Tx/Rx before any mesh exists. When the model
 is established, produce a model-card report
 (`gprmax-skill report model-card <contract>`) that consolidates the contract,
 numerical gates, sensitivity, processing chain, and environment into a single
@@ -89,9 +89,9 @@ and the status table.
 **Batch only after the model is established.** A new project must first
 complete the guided setup (contract with a declared dimension, resolved
 medium/target materials, and a frequency band) and run at least one single-case
-verification that produces auditable ``.out`` evidence. Run
+verification that produces auditable `.out` evidence. Run
 `gprmax-skill dataset check-model` to inspect readiness;
-`gprmax-skill dataset sample --force` skips the gate explicitly. The batch is
+`gprmax-skill dataset sample <space> --force` skips the gate explicitly. The batch is
 complete when the run queue is exhausted, every case has a recorded status, and
 the status table is delivered.
 
@@ -102,9 +102,7 @@ B-scan. Recommend a processing chain matched to the question; read
 [preflight-and-audit.md](references/preflight-and-audit.md) for the chain
 categories, display-only discipline, and the user-priority rule. Processing is
 complete when the chain is chosen, its parameters recorded, and the artifact is
-delivered with the required labeling: coordinate datum, propagation/range-mapping
-convention, exact processing chain, and scope of validity (see §Close the
-evidence package for the full deliverable set).
+delivered with the required labeling defined in §Close the evidence package.
 
 ## Keep comparisons controlled
 
@@ -120,7 +118,7 @@ Reuse an intact, audited compatible run instead of spending compute to rerun it.
 If an output is missing, corrupt, stale, or cannot be reconciled with its input,
 record the limitation and obtain authority before requesting replacement compute.
 The comparison is complete when the factor(s) and every retained control are
-stated, and every compared pair matches on the invariants above. Read
+stated, and every compared pair matches on the invariants above. read
 [simulation-contract.md](references/simulation-contract.md) for the
 controlled-pair contract format and pair-compatibility rules.
 
@@ -160,8 +158,9 @@ read [preflight-and-audit.md](references/preflight-and-audit.md) for the HDF5
 output audit procedure (dataset existence, dtype, shape, timestep, sample count,
 and manifest reconciliation). Missing, duplicate, truncated, stale, or unmapped
 outputs are audit failures, not analysable results. The audit is complete when
-every expected output is reconciled against its manifest entry, and any
-missing/corrupt/unmapped output is recorded as an audit failure.
+every expected output is reconciled against its manifest entry, and any missing,
+duplicate, truncated, stale, or unmapped output is recorded as an audit
+failure.
 
 ## Reconstruct SFCW faithfully
 
@@ -198,7 +197,7 @@ interface-polarity expectations only where the model has been validated for that
 scattering regime. Use waveform polarity only where the physical representation
 supports it; use declared energy/envelope metrics for amplitude separability.
 
-Read [interpretation-and-claims.md](references/interpretation-and-claims.md)
+read [interpretation-and-claims.md](references/interpretation-and-claims.md)
 before making detection, resolution, thickness, inversion, or system-performance
 claims. Metric selection is complete when the metric is declared, the chain is
 frozen, and the metric's scope (detection, localization, resolution, thickness)
