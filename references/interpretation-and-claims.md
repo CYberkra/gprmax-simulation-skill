@@ -25,8 +25,8 @@ because its geometry has two nominal faces. Validate the interpretation against
 the model class and the selected receiver observable.
 
 Use the signed/complex A-scan when polarity or coherent phase is the question.
-Use the Hilbert envelope when the question is event strength or peak-to-valley
-separation. An envelope peak does not prove a distinct physical interface by
+For a real A-scan use its Hilbert envelope; for the Liu2021 complex IFFT profile
+use its magnitude directly. An envelope peak does not prove a distinct physical interface by
 itself; it must be connected to a declared forward model or controlled sweep.
 
 ## Match the metric to the claim
@@ -53,6 +53,59 @@ search interval, whether amplitudes or powers enter the dB conversion, and the
 threshold. Require a stable/prominent valley rather than treating a one-sample
 numerical dip as a physical separation.
 
+## Validate the selector before searching a size limit
+
+Test a single-reflection response with realistic band weighting, known two-echo
+controls across spacing and amplitude ratio, and available physical ablation
+controls. A single reflection with sidelobes must not certify two interfaces.
+Freeze validation tolerances and target/noise assumptions before new comparative
+evaluation; do not raise thresholds post hoc merely until one counterexample
+passes. A prominence or amplitude threshold alone is not a proven replacement.
+
+The D80 historical region picker v2 selects local maxima by theoretical-time
+distance and requires separation plus a 3.0103 dB valley. A single ideal echo
+was shown to pass it with a roughly 37.62 dB valley. Consequently, its RESOLVED
+label means a historical numerical metric passed, not validated interface
+resolution. Keep its old results intact; register a newly validated selector as
+a separate version and reanalyse compatible raw outputs.
+
+Using true geometry to guide a selector is acceptable for a model-informed
+diagnostic but is not blind localization/detection. Report this dependency.
+Validate candidate identity as thickness changes; do not let the picker silently
+switch from an interface-associated peak to a sidelobe or unrelated response.
+
+## Ablation evidence
+
+State exactly which voxels/material regions changed. Extending the first occupied
+slice is not the same geometry as retaining the whole target and filling each
+occupied transverse ray behind its last target cell. Neither directly simulates
+a pure rear-only reflection.
+
+Compare original response, extended-target response and their complex difference.
+The latter includes interactions caused by the changed geometry; amplitude ratios
+are not additive energy/contribution percentages. Exact complex closure follows
+from subtraction and is an algebraic check, not independent physical validation.
+
+Derive or load peak positions from versioned current results, and compute each
+declared acceptance condition. No unconditional physical PASS or hardcoded anchor
+can replace that evaluation. Examine the artificial terminal, other paths and
+band-limited leakage before claiming the original rear interface was isolated.
+
+## Thickness and occupied volume
+
+Report grid-realised front/back face coordinates, occupied span and target-voxel
+volume separately from nominal bounding dimensions. A changing irregular mask
+also changes scattering geometry; do not treat it as a pure planar-thickness
+perturbation. Compare different shape/fill families separately.
+
+Scan thickness and transverse dimensions, then test joint combinations. Do not
+multiply separately found minima. Preserve non-monotonic outcomes and untested
+cells. An adaptive search gives the smallest tested passing case; a finite-set
+minimum additionally requires excluding all smaller candidates in that set.
+Retest final candidates for interface association and relevant numerical
+sensitivity; stochastic robustness requires actual independent realizations,
+not repeated deterministic geometry labels.
+
 ## Detection probability and system claims
 
 `P_D`/`P_FA` claims require a frozen detector and threshold, positive and
@@ -69,20 +122,3 @@ For every conclusion, state the model class, materials, geometry, band,
 processing chain, noise/background treatment, and criterion. Use bounded wording
 such as “for the audited simulated case” when validation has not covered the
 variation needed for a general statement.
-
-## Processing-chain discipline
-
-Freeze the processing chain before comparative evaluation; do not change it
-mid-study. Normalisation, AGC, clipping and other display-only enhancements are
-for inspection only and never feed a quantitative metric. Distinguish three
-product layers: raw solver output, physically calibrated/conditioned data, and
-display-only figures. A processed figure must record its exact chain and
-parameters so it is reproducible and auditable.
-
-## User priority
-
-When the user explicitly specifies a processing method or parameter choice,
-follow the user's request. Recommended defaults serve as a starting point and
-never override an explicit user instruction. If a user request conflicts with a
-blocking validity gate, surface the conflict and ask rather than silently
-choosing either side.

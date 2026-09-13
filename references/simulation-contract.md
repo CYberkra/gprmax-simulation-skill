@@ -18,12 +18,12 @@ Create a concise machine-readable or human-readable contract containing:
 - intended processing chain and any SFCW tone grid, source reference, range
   datum, or calibration reference.
 
-The canonical machine-readable form is validated against
-`schemas/simulation_contract.schema.json`, with `templates/simulation_contract.yaml`
-as the starting skeleton and `templates/model_purpose.yaml` for the claim
-statement (allowed vs forbidden claims). The schema is contract-first: new
-fields (for example batch `scan:` dimensions, fidelity intent, material
-`condition`) are added to the schema before any consumer depends on them.
+For Liu2021 joint simulation, identify the unit-impulse input, corrected synthesis
+module version/hash, discrete normalization, CW amplitude ramp, LP cutoff rule,
+steady windows, complex background operation and complex-envelope convention.
+Read [liu2021-joint-chain.md](liu2021-joint-chain.md). If choosing SVD or another
+background method, record it as an explicit processing factor with its own
+validation; do not inherit matched-background performance automatically.
 
 Record the actual discretised values separately from nominal values. A declared
 dimension is not necessarily representable on a Yee grid.
@@ -58,24 +58,3 @@ Use a new case or dated study package for a materially changed physical model.
 Preserve frozen sources and results. A regenerated geometry file may be omitted
 from a lightweight archive only when its deterministic generator, parameters,
 and recorded hash make regeneration auditable.
-
-## Study directory convention
-
-Maintain the standard directory layout and naming conventions defined in
-[study-layout.md](study-layout.md). Never silently change physical parameters;
-record every intentional change in the study README.
-
-## Material library
-
-Maintain a material library as YAML files with a JSON index for fast lookup.
-Each entry stores:
-
-- name, category, properties (ε_r, σ, dispersion model with parameters),
-  valid frequency range, optional condition (moisture, porosity — geological
-  materials vary strongly with water content), source (kind, reference, doi),
-  confidence (1-5), and notes.
-
-Materials are stored in the skill repository and may be overridden by a
-project-local `materials_override/` directory. Only commit entries after user
-confirmation. An entry without a provenance trail is a draft, not a frozen
-reference.

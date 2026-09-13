@@ -1,178 +1,70 @@
-# Source and SFCW reconstruction
+# Source and SFCW reconstruction: route by excitation
 
-Use this reference when a time-domain gprMax result is converted to an SFCW-like
-response or when comparing reconstructed traces.
+For the current Liu2021 workflow, read [liu2021-joint-chain.md](liu2021-joint-chain.md).
+That reference replaces generic source deconvolution as the default in the D80
+project. This file covers other source/transform choices and common conventions.
 
-## Declare the acquisition and transform chain
+## Choose the correct input path
 
-State whether the result is an actual per-tone stepped-frequency simulation or a
-broadband-to-SFCW-equivalent reconstruction. For the latter, record:
+- Built-in unit impulse plus Liu2021 CW convolution: use the bundled corrected
+  module. Keep its discrete normalization; do not add source division or dt
+  factors without declaring and validating a changed convention.
+- Ricker, sinc, measured or arbitrary pulse: inspect the complex source spectrum.
+  Direct frequency sampling measures the pulse-shaped response. A transfer
+  estimate needs a justified source reference and conditioning; it is not
+  automatically a valid impulse input to the Liu2021 module.
+- Direct per-tone FDTD: audit the actual waveform, settling time, phase reference,
+  tone frequencies and run evidence. Do not relabel synthesized CW outputs as
+  separately executed per-tone simulations.
 
-1. the time-domain receiver response and time reference;
-2. source-spectrum reference and complex transfer-function estimator;
-3. selected tone frequencies, spacing, uniformity, excluded bins, and frequency
-   window;
-4. deconvolution/conditioning and regularisation or magnitude floor;
-5. any matched background operation;
-6. inverse-transform method, zero padding, range/time mapping, and envelope.
+Record source/time origin, tone grid, estimator, conditioning, filter/window,
+background method, inverse transform and amplitude convention. Use exact DTFT
+or a validated interpolation for off-FFT-grid tones; nearest FFT bins are not
+an exact physical-frequency evaluation.
 
-Keep complex quantities complex until the chosen final time-domain product is
-formed. Nearest FFT-bin sampling is not exact-tone extraction for off-grid
-physical tones; use a documented DTFT/DFT evaluation, or validate an equivalent
-complex interpolation method.
+## Source recovery when required
 
-## Distinguish the Liu 2021 complex profile from a real bandpass trace
+Inspect support and spectral nulls before dividing by a source reference.
+Declare regularization, excluded tones and conditioning; apply identical
+operations to compared data. Source recovery from a band-limited pulse is a
+separately validated branch, not a reason to overwrite frozen impulse outputs.
 
-For the Liu 2021 impulse-LTI route, synthesize each ramped continuous-wave
-response from the common impulse response, extract steady-state quadrature
-samples on the declared tone grid, and form the complex sequence
-`I + jQ`. Reconstruct the complex delay profile by applying an IFFT directly to
-that uniformly spaced sequence. Do not discard the first measured tone merely
-because it occupies index zero in the baseband sequence, and do not add a
-Hermitian counterpart to this complex-profile path.
+Keep waveform delay, electrical phase reference and range zero distinct.
+Remove a known delay only once. Account for the source injection and units
+before claiming an absolute physical transfer function.
 
-If a real carrier-resolved bandpass trace is requested instead, expose it as a
-separate reconstruction product. Place positive-frequency samples at their
-actual absolute-frequency bins and construct the corresponding Hermitian
-negative-frequency samples. Never mix this convention with the baseband
-complex-profile convention.
+## Background and complex information
 
-For `NFFT` samples and tone spacing `delta_f`, report the reconstructed delay
-bin and unambiguous delay explicitly:
+Keep phase through demodulation, conditioning, background subtraction and inverse
+reconstruction. Matched background subtraction is a controlled simulation
+diagnostic, not proof of field cancellation performance. It requires compatible
+receiver definitions, grids and normalization.
 
-- `delay_bin_s = 1 / (NFFT * delta_f)`;
-- `unambiguous_delay_s = 1 / delta_f`.
+For SVD, specify the multi-trace matrix, domain, rank selection and target-loss
+validation. Preserve the unfiltered data and evaluate a changed background
+method as a changed processing chain, with reference/negative controls.
 
-These are not the FDTD solver timestep. Zero padding changes `delay_bin_s` for
-display sampling but does not change the physical bandwidth resolution or the
-unambiguous delay.
+## Two different inverse products
 
-When claiming Liu 2021 alignment, implement its ramp as `k*f*t` while
-`k*f*t < 1` and unity thereafter, then perform low-pass or an explicitly
-equivalent steady-state coherent integration after quadrature mixing. An
-unqualified whole-record mean is not equivalent when the record includes
-pre-arrival zeros, ramp-up, or convolution transients. Record any constant I/Q
-amplitude scaling (for example, multiplying both branches by two).
+For uniformly spaced measured tones, a complex baseband IFFT followed by abs
+produces the Liu2021 project envelope. The lower frequency shifts carrier phase,
+not this envelope; record f_start and delta_f. Do not require Hermitian completion
+or a second Hilbert operation on this complex product.
 
-The impulse-LTI implementation is the paper's noiseless numerical core unless
-the processing record explicitly declares a per-tone receive-noise model,
-random seed, noise power/correlation, injection point, and matched comparison
-gain. Do not describe the noiseless route as a reproduction of the paper's
-noise-robustness experiment.
+When explicitly requesting a real passband time series, place tones at their
+physical frequencies, construct the appropriate negative-frequency counterpart,
+handle DC/Nyquist correctly and declare scaling. A real time-domain A-scan may
+then use its Hilbert analytic magnitude. These are different products, not
+mandatory consecutive stages.
 
-## Impulse-response SFCW synthesis (Liu & Xiao 2021)
+For nonuniform tones use a documented inverse method rather than ordinary IFFT.
+Zero padding changes sampling, not physical bandwidth or resolution. Include
+IFFT normalization when comparing absolute amplitudes at different FFT lengths.
 
-The default SFCW-equivalent method follows Liu & Xiao (2021,
-*Fast Forward Simulation and Fusion for Stepped Frequency Ground Penetrating
-Radar Signal Based on the Impulse-Response Principle*, Adv. Geosci. 11(4),
-487-496). Because FDTD is linear time-invariant, one broadband impulse run
-fully characterises the system: run a single unit-impulse excitation to obtain
-the impulse response `h[n]`, then convolve it in the time domain with each
-tone's continuous-wave excitation. This equals per-tone simulation to an
-error below -200 dB while running FDTD only once.
+## Time and range
 
-Signal model and chain:
-
-- tones `f_n = f_0 + (n-1)Δf`, bandwidth `B = (N-1)Δf`;
-- distance `d` is encoded as phase `φ_n = 2πf_n·2d/v` across tones;
-- synthesis: `y[n] = x[n] * h[n]` for each single-frequency `x[n]`;
-- extraction: quadrature mixing `I_n = Rx·sin(2πf_n t)`, `Q_n = Rx·cos(2πf_n t)`,
-  then low-pass to remove the `2f_n` term, giving the complex sample
-  `Rx(n) = I_n + jQ_n = (A_n/2)e^{-jφ_n}` (negative-phase convention so a
-  target at delay `τ` reconstructs at positive delay after the inverse
-  transform);
-- fusion: inverse transform of the N complex samples to a time-domain A-scan,
-  then assemble traces into a B-scan.
-
-Constraints to enforce:
-
-- mesh by the highest tone: `dx ≤ c/(10·f_max·√ε_max)`; CFL
-  `dt ≤ 1/[c·√(1/dx² + 1/dy² + 1/dz²)]`;
-- time window must cover the two-way travel to the farthest target;
-- ramp the transmitted tone onset (linear ramp `Tx(t)= k·(f_n t)·sin(2πf_n t)` for
-  `k·f_n t < 1`, then `sin(2πf_n t)`, endpoint continuous at factor 1) to avoid
-  Gibbs-type high-frequency artefacts;
-- quadrature mixing must be followed by low-pass filtering, otherwise the `2f_n`
-  component corrupts the baseband I/Q.
-
-gprMax support (verified in 3.1.6): the built-in `impulse` waveform type is a
-true single-FDTD-step delta (`#waveform: impulse 1 1e9 imp`), so no approximation
-is needed for a Hertzian dipole source sampled at whole steps. The numeric
-dispersion auto-analysis skips `impulse` (no defined peak frequency); compute
-the cell/wavelength check explicitly instead. A user waveform file is only a
-secondary approximation and must pass an explicit `fill_value=0` to avoid NaN.
-
-Two equivalent routes exist; declare which one is used: the impulse-response
-synthesis above, or a broadband flat-pulse excitation with exact complex
-frequency sampling (the latter requires deconvolution and windowing and is what
-many frozen project chains use).
-
-## Source support and deconvolution
-
-Inspect source spectral support over all claimed tones. Bins near a spectral null
-need an explicit quality gate and regularised treatment; blind division amplifies
-noise and numerical error. Apply the same source reference, phase convention,
-conditioning, and window to compared traces.
-
-Track simulation time zero, waveform origin, source peak/delay, electrical phase
-reference, and reported range-zero datum separately. Remove a known source delay
-once, not once in the transfer function and again in plotting.
-
-## Custom waveform files
-
-A user-defined excitation file is a common failure point and must pass a parse
-smoke before any run:
-
-- verify the header line has at least one waveform-ID token — gprMax reads the
-  first line and splits it into column identifiers (`input_cmds_singleuse.py`),
-  so a missing or empty header makes the case fail to parse. A `time` column is
-  *optional*: if the first column is named `time` gprMax uses that user time
-  vector, otherwise it uses the simulation time array. The required part is the
-  waveform ID, not the literal token `time` (example header: `time flatpulse`);
-- verify the sample duration covers the simulation time window
-  (`samples × dt ≥ time_window`); gprMax zero-pads a shorter file and truncates
-  a longer one, so a too-short excitation silently degrades late-time results;
-- if the file is used through `#excitation_file`, pass an explicit `fill_value`
-  (for example `0`) so interpolation does not leak NaN outside the sample range;
-- never rename, rewrite, or mix waveform files within a study; the waveform is
-  a frozen artifact recorded in the manifest.
-
-## Background handling
-
-For a controlled target-response diagnostic, first form identically calibrated
-complex transfer functions and then calculate
-
-`H_residual(f) = H_target_present(f) - H_background(f)`.
-
-The resulting residual may expose target causality, but it is not raw field data
-and does not by itself certify an engineering receiver cancellation method. Do
-not subtract traces with different time grids, source references, precision, or
-receiver definitions.
-
-## Inverse reconstruction and envelope
-
-For a uniformly spaced frequency grid compatible with a DFT/IFFT, construct the
-appropriate Hermitian negative-frequency counterpart before requesting a real
-time-domain trace. DC and Nyquist singleton bins must be real; inspect the IFFT
-imaginary residue as a consistency check. For a nonuniform/off-grid tone set,
-use and document a suitable complex inverse method rather than silently treating
-it as an ordinary IFFT.
-
-For a real A-scan `s(t)`, the Hilbert analytic signal is
-
-`z(t) = s(t) + j H{s(t)}`
-
-and the instantaneous-amplitude envelope is `|z(t)|`. It is nonnegative and
-helps localise the strength and separation of oscillatory events; it does not
-preserve reflection polarity or replace the original A-scan for phase analysis.
-
-Zero padding refines displayed time/range-bin sampling only. It cannot add
-bandwidth, improve physical delay resolution, or create an unmeasured response.
-
-## Range mapping
-
-State the coordinate datum and velocity model used to map delay to distance.
-For dispersive media, use a defensible group-delay, frequency-dependent, or
-calibrated mapping rather than assuming a single permittivity without support.
-The bandwidth-derived delay response and the medium range conversion are separate
-parts of the argument.
+Record the periodic unambiguous time window 1/delta_f, observed propagation
+window, geometric coordinate datum and velocity/range mapping. A dispersive,
+bistatic, finite-target peak is not automatically the one-dimensional geometric
+interface time. Separate geometry travel-time predictions from envelope maxima
+and numerical/processing bias.

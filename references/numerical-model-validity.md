@@ -1,111 +1,68 @@
 # Numerical model validity
 
-Use this reference for mesh, precision, source/receiver, boundary, antenna, or
-hardware-feasibility decisions.
+Read for mesh, material dispersion, boundary, precision or hardware feasibility
+decisions. Project values belong in its contract, not universal hard gates.
 
-## Mesh and domain
+## Mesh and dispersion
 
-Audit cell counts across every feature that controls the requested observable:
-target thickness, gaps, interface roughness, source/receiver separation,
-conductors/feeds, and the shortest material wavelength relevant to the claimed
-band. State nominal dimensions and realised mesh dimensions. Refine deliberately
-and compare against a defined observable when numerical convergence matters.
+Compute cells across target thickness, gaps, roughness and the shortest relevant
+material wavelength over the claimed band. Use frequency-dependent phase velocity
+where appropriate, not a band-centre velocity to certify an entire dispersive band.
+About ten cells per shortest wavelength is a useful initial guideline, not a
+convergence proof or an automatic reason to discard an existing diagnostic run.
 
-Choose domain extents and PML clearance so that boundary interactions cannot
-reach the receiver in the analysed time window. Record the time window, rather
-than assuming a plot range proves the model was long enough.
+Validate sensitive observables through controlled refinement when claiming a
+physical size limit. Record nominal and actual cell geometry, including any
+centre shift caused by even/odd cell counts. More IFFT points cannot cure a coarse
+FDTD mesh.
 
-Declare the model dimension (2d / 2.5d / 3d) and keep conclusions within that
-representation level: a 2D single-cell slice is TM mode, a 2.5D thin slice
-(3–5 cells in the invariant direction) retains 3D physics at lower cost, and a
-full 3D model is required for formal/engineering claims. A reduced-dimensional
-result never certifies a three-dimensional objective (see `audit_geometry` and
-the fidelity ladder F2/F3/F4).
+Check the CFL limit and the actual solver's material-model restrictions against
+its version/documentation. Do not impose an unsupported universal tau/dt > 4.
+A stable run alone does not establish small phase error.
 
-## Source, receiver, and representation level
+Official reference: https://docs.gprmax.com/en/latest/gprmodelling.html
 
-Record source type, position, orientation/polarization, waveform, receiver
-component, and whether Tx/Rx are colocated. Check the actual discretised source
-and receiver location after model generation.
+## Boundaries and travel time
 
-Distinguish an ideal field source, an electromagnetic antenna model, and a
-calibrated hardware/system model. Relative field quantities cannot be relabelled
-as received voltage, dBm, receiver SNR, or hardware probability of detection
-without a stated and validated field-to-system calibration.
+Record PML thickness, material continuation, clearance and relevant travel paths.
+Check possible boundary contributions against the analysis window and allowed
+error; use an appropriate boundary-control case when needed.
 
-For port or antenna models, inspect feed connectivity, return path, loading,
-conductor/material overlap, and Yee-cell alignment. A visually plausible antenna
-does not establish an electrically valid feed.
+An object stopped at the inner PML face has a material termination. It does not
+become infinite just because PML starts nearby. A time estimate through the
+slowest target path is not necessarily the earliest possible return. Band-limited
+reconstruction and noncausal FFT filters can leak out-of-window responses into
+the displayed window, so plot cropping is not proof of isolation.
 
-## Precision and execution feasibility
+## Source and receiver representation
 
-Record requested precision separately from output evidence. Confirm output dtype
-from the receiver dataset; a filename, command line, or script flag is not
-proof. Assess available device memory against the actual model and selected
-precision before running. If the selected build cannot meet the requested
-setting, stop and report the constraint rather than quietly changing it.
+Record ideal source versus antenna/port model, component, orientation and Yee-grid
+position. Ideal Ez measurements are not calibrated voltage, dBm or hardware SNR.
+For antenna/port models check feed connectivity, loading and material assignment.
 
-## Minimal numerical evidence
+Do not make a finite object obey infinite-interface polarity or one-dimensional
+arrival-time assumptions without checking the scattering regime.
 
-Use inexpensive, focused checks before a large sweep: material assignment,
-geometry alignment, source/receiver placement, intended output dataset, and one
-small smoke case if it is permitted. Keep expensive simulations out of automated
-unit tests. For a formal numerical claim, retain the test definition, comparison
-observable, and evidence rather than only a final plot.
+## Precision and execution resources
 
-## Generic numerical gates
+-gpu selects GPU execution; it does not prove FP64. Verify solver build and the
+raw receiver dtype before casting. Estimate RAM/VRAM and disk from the actual
+domain and build; small targets do not reduce a fixed full-domain FDTD cost.
 
-Use general-purpose defaults, never project-specific values:
+There is no universal FP32 noise floor in dB relative to a direct wave. Roundoff,
+background cancellation, propagation and implementation affect the usable
+dynamic range. Follow the project's precision requirement and test numerical
+error where the signal is small.
 
-- mesh the highest tone: cells per wavelength ≥ 10 at the top of the band using
-  the shortest material wavelength (for dispersive media take the phase
-  velocity near band centre); anisotropic grids (dx≠dy≠dz) are allowed but the
-  observable-controlling direction must be stated;
-- time step from the CFL condition; for Debye-type media check τ/dt > 4;
-- PML layers from 10 upward; domain and PML clearance must keep boundary
-  interactions out of the analysed time window;
-- precision: fp32 floor is about -90 dB relative to the direct wave; a demand
-  beyond roughly 110 dB dynamic range requires fp64. Verify dtype from the
-  output dataset, never from a filename or command flag.
+Probe only resources relevant to the authorized task: GPU/VRAM, memory, output
+disk, Python/gprMax/build/CUDA as needed. Reuse the user's chosen environment;
+do not switch precision, shrink a physical domain or silently choose a different
+server to make a run fit.
 
-## Quantitative checks at setup time
+## Minimal evidence
 
-At model setup (guided setup / scaffold stage) compute the numbers, do not
-merely state principles:
-
-- minimum cells per wavelength across the claimed band, using the realised
-  cell size and the shortest material wavelength at the highest tone;
-- the CFL-limited time step from the realised mesh;
-- PML thickness in metres and cells, and the clearance from the target and
-  from source/receiver to the PML boundary;
-- time-window coverage of the farthest target's two-way travel.
-
-Record these values in the contract so later gates can re-check them
-deterministically instead of re-deriving assumptions.
-
-## Environment probe
-
-Probe the local environment (GPU model, VRAM, CUDA, system memory, free disk on
-the output volume, Python version, gprMax presence/version) so the model plan
-can be matched to real resources. The probe is informational only: it never
-decides whether to run locally or on a server — that decision belongs to the
-user. Do not collect CPU model, usernames, directory listings, file contents,
-process lists, or network connections.
-
-Use the probe to:
-
-- sanity-check that the study is feasible on this machine before designing the
-  run (for example, VRAM against the estimated model footprint at the selected
-  precision — fp32 vs fp64 differs by a factor of two);
-- surface a match hint when the estimated VRAM / runtime is close to or beyond
-  what the local device offers ("estimated 20 GB, local 24 GB — match 100%"
-  vs. "estimated 40 GB, local 24 GB — server needed"), so the environment
-  decision is informed by numbers;
-- report the gprMax version found, because CLI flags (for example `-gpu` vs
-  `--gpu`) and output layout are version-sensitive;
-- record the probe result in the study log so later audits can reproduce the
-  environment context.
-
-The probe output is a plain report (`probe_environment.py::format_report`) and
-a JSON snapshot (`probe_to_json`); both are artifacts of the study, not
-authoritative configuration.
+Use supplied geometry/configuration tests and raw-output schema checks. A small
+smoke case is useful when it answers an unresolved implementation question and
+is within scope; it is not a mandatory new run for every analysis. Keep expensive
+simulations outside unit tests, preserve comparison observables and provenance,
+and record exactly what remains unvalidated.

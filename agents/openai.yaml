@@ -1,3 +1,3 @@
 interface:
-  display_name: "gprMax Simulation"
-  short_description: "Plan, build, run, and audit reproducible gprMax FDTD simulations, including SFCW and broadband-to-SFCW-equivalent GPR studies"
+  display_name: "gprMax · Liu2021 联合仿真"
+  short_description: "gprMax 冲激正演、Liu2021 频域合成、结果审计与界面消融"

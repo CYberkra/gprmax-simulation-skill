@@ -1,79 +1,51 @@
-# Gates, fidelity, and claim states
+# Evidence checks and claim states
 
-Use this reference to interpret gate reports and to know what a fidelity level
-licenses. It fixes the vocabulary shared between the documentation layer, the
-gate engine, and the claim ledger, so that an agent reading a report can
-predict its shape and semantics.
+These are reporting conventions, not an installed gate engine or command-line
+interface. Do not invent gate executables, claim-ledger APIs, promotion ladders,
+or flags such as --allow-conditional. Use existing project machinery if it exists.
 
-## Gate states (`GateState`)
+## Report what was checked
 
-Every blocking/evidence gate returns exactly one state:
+Keep independent fields for run/output integrity, processing validation,
+metric result, interface attribution, and the final scoped claim.
 
-| State | Meaning |
-|---|---|
-| `PASS` | Gate satisfied; evidence intact. |
-| `PASS_WITH_LIMITATION` | Gate satisfied with recorded limitations; promotion requires explicit conditional acceptance and cannot reach verified sign-off. |
-| `BLOCK` | Gate failed; expensive execution or promotion stops (fail-closed). |
-| `STALE` | Previously valid result invalidated by an upstream change; must be revalidated before reuse. |
-| `NOT_APPLICABLE` | Gate does not apply to this contract. |
+- PASS: the named check actually ran and satisfied its recorded criterion.
+- PASS_WITH_LIMITATION: evidence supports the named limited statement.
+- BLOCK: the named action or claim cannot proceed because its required check failed.
+- STALE: an upstream change invalidated this evidence for the new use.
+- NOT_APPLICABLE: the check is irrelevant to this task.
 
-Blocking failure always follows the repair loop, never "probably fine":
+A scientific NOT_RESOLVED row is a valid experimental result, not a corrupt run.
+A successful script exit or unconditional JSON status is not a physical PASS.
+Do not stop an authorized exploratory simulation solely because a stronger
+physical or hardware claim is unsupported; restrict the claim to the evidence.
 
-```text
-FAIL → STOP → root cause → repair → regression test → rerun affected gates → resume
-```
+## Claims
 
-## Claim states (`ClaimState`)
+Use UNVERIFIED, CONDITIONAL, VERIFIED, REJECTED or STALE with a specific claim
+and scope. VERIFIED requires demonstrated evidence for that statement, not a
+numerical fidelity label or an attractive figure.
 
-| State | Meaning |
-|---|---|
-| `UNVERIFIED` | Not yet supported by evidence |
-| `CONDITIONAL` | Supported with recorded limitations |
-| `VERIFIED` | Supported by a fully passing gate chain and minimum fidelity |
-| `REJECTED` | Contradicted by evidence |
-| `STALE` | Previously valid, invalidated by an upstream change |
+- Implementation consistency: analytic/DTFT checks and regression on raw data.
+- Numerical model behavior: audited solver/model and the relevant diagnostics.
+- Interface association: controlled changes and competing explanations addressed.
+- Physical dimension limit: validated estimator, negative controls, search bounds
+  and relevant numerical convergence/uncertainty.
+- Detection probability: frozen detector, positive/negative populations, noise
+  assumptions, sample size and confidence intervals.
+- Hardware/system performance: the above plus a validated field-to-system link.
 
-## Dependency invalidation
+Optional F0–F5 labels may describe model abstraction, but a label does not
+automatically license or prohibit a scientific conclusion. Do not demand
+unnecessary hardware calibration for a clearly scoped ideal-simulation study.
 
-Evidence forms a chain: `environment → numerics → source → geometry_materials →
-antenna_system → simulation → processing → metrics → claims`. A change upstream
-invalidates every dependent downstream result, marking them `STALE` until
-revalidated. Never reuse a stale result as if it were current.
+## Invalidation
 
-## Fidelity levels (F0-F5)
+Track environment/build, geometry/materials, source/receiver, raw outputs,
+processing, background method, metrics and conclusions. Revalidate affected
+downstream evidence when an upstream dependency changes. A processing-only change
+usually requires reanalysis, not a new FDTD run; changing physical inputs normally
+requires a new compatible simulation or an explicitly justified existing one.
 
-Promotion is the ordered climb through fidelity that a claim licenses. Each
-level is the *minimum* physical modelling needed for a class of claims.
-
-| Level | Meaning | Typical evidence |
-|---|---|---|
-| `F0` | Analytical sanity; no numerical simulation | hand/analytic check |
-| `F1` | Minimal numerical physics | one small smoke case |
-| `F2` | Reduced-dimensional propagation | 2-D / scalar approximation |
-| `F3` | Simplified three-dimensional physics | coarse 3-D, ideal sources |
-| `F4` | High-fidelity three-dimensional physical model | fine mesh, physical targets |
-| `F5` | Calibrated hardware and system closure | validated field-to-system link |
-
-## Minimum fidelity for claims
-
-A claim may only be signed off at or above its minimum fidelity; a requested
-fidelity below the minimum blocks sign-off (`BLOCK_CLAIM_MINIMUM_FIDELITY`).
-Default minimum is `F1`. Known minimums:
-
-| Claim (objective, scope) | Minimum |
-|---|---|
-| `(antenna, engineering)` | `F4` |
-| `(system, engineering)` | `F5` |
-| `(detection, engineering)` | `F5` |
-| `(resolution, physical)` | `F4` |
-| `(thickness, physical)` | `F4` |
-
-## Promotion rules
-
-- Any `BLOCK` or `STALE` gate result blocks promotion.
-- Promotion cannot move to a lower level (demotion is blocked).
-- Skipping more than one level requires a non-empty justification.
-- A `PASS_WITH_LIMITATION` result requires explicit conditional acceptance
-  (`--allow-conditional`) and can never be promoted to verified sign-off.
-- Claim sign-off requires an explicit objective and claim scope, the requested
-  fidelity at or above the claim minimum, and no conditional gate results.
+Preserve frozen results and register a new analysis version. The latest timestamp
+alone does not make an unvalidated picker stronger than earlier evidence.
