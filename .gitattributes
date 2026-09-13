@@ -1,0 +1,2 @@
+# Keep the distributed MATLAB module stable across Windows/Linux checkouts.
+*.m text eol=lf

@@ -25,8 +25,8 @@
 ## 本地来源（以下为相对项目根目录）
 
 - 论文 PDF：_templates/刘 - 2021 - Fast Forward Simulation and Fusion for Stepped Frequency Ground Penetrating Radar Signal Based on Im.pdf。
-- 正式合成模块：44_20260911_LIU2021_CHAIN_CORRECTION/scripts/chain/sfcw_paper_H_fixed.m。来源文件 SHA256：6254dff86041253bc34fcbc2143fbf8e057f8427ab575abd19f0274d82b2c82b。skill 资产计算主体相同，头部用法注释已修正；资产不是来源文件的字节同一副本，使用时分别计算哈希。
-- 本次打包资产 SHA256：9fd95d2d2ba61e27314f43cc75da9489f4a0dfa07d6d82646c2286b644682aff。核对时已确认除头部注释与换行外，计算主体逐字一致；后续资产编辑需更新此记录并重新验证。
+- 计算内核来源：44_20260911_LIU2021_CHAIN_CORRECTION/scripts/chain/sfcw_paper_H_fixed.m，来源文件 SHA256：6254dff86041253bc34fcbc2143fbf8e057f8427ab575abd19f0274d82b2c82b。skill 资产增加了输入/窗口检查、向量方向规范化及用法注释，原卷积解调内核保持不变。
+- 打包资产 SHA256（UTF-8、LF）：e5d8b92aa68a47294ab678609b7cef266c304f519fb852f53ebe836e17717fd9。仓库 .gitattributes 固定 MATLAB 文件为 LF；后续修改资产需更新记录并验证。
 - 无目标输出：40_20260908_D80_PAPER_IMPULSE_SFCW/outputs/D80ZS2_H0_PAPER_IMPULSE.out。SHA256：34a9e8cbb9f802e5baabd5513ea38df4f1ac42fddb5da3ddfdd047fa28d8d4f3。
 - 不规则目标厚度案例与生成器：42_20260908_D80_THICKNESS_PAPERCHAIN_IMPULSE。
 - 实心等体积方/圆截面案例：43_20260909_D80_XSECTION_SHAPE_IMPULSE。
@@ -39,7 +39,7 @@
 
 44 包区域选峰 v2 使用理论区域两侧各 20 ns、峰间距>11.3636 ns、理论距离最小的峰对、谷深≥3.0103 dB。88 MHz 来自目标差分谱高于自身最大幅值 5% 的频带，属于项目启发式约定，不是经过独立校准的系统 PSF。
 
-已复现反例：只有一次延迟反射，在相同 30–250 MHz 频点和 IFFT 下，v2 把 909.18 ns 主峰与 934.08 ns 旁瓣判为双峰，谷深约 37.62 dB。不能把“谷深大”直接升级为两个界面归因。没有经过负控验证的新判据时，应返回探索指标和未完成项，而不是自动寻找并发布“最小目标”。
+v2 的单反射误判及后续验收要求见 [判据参考](interpretation-and-claims.md)。没有通过负控验证的新判据时，返回探索指标和未完成项，不发布已认证的最小目标。
 
 0.88 m 的约 3.10 dB 和 SQ12/CR12 的 1.6128 m³ 是历史数值判据下的已测通过记录，不是已认证的物理极限。T112 的消融支持前/后部关联，不能外推为所有厚度、体积的纯界面分解。
 
@@ -49,7 +49,7 @@
 
 厚度用实际占据跨度，体积用目标体素数×0.0001 m³。不规则掩膜与实心方柱分族报告；S01 对当前确定性几何不代表随机独立重复。厚度、横向尺寸和轮廓变化各自记为因素。
 
-先固定截面扫厚度、固定厚度扫截面，再实际运行联合缩小点。非单调结果保留；未测点留空。自适应搜索只能报告“已测范围最小通过值”，有限候选集最小值要求排除该集合内所有更小未测候选。
+联合尺寸搜索与最小值的报告边界见 [判据参考](interpretation-and-claims.md)。
 
 固定频段尺寸试验不自动扩展为扫频任务。用户要求 D80 频段比较时，依 AGENTS.md 分别给出 30、40、50 MHz 三个低频起点、上边界按 10 MHz 扫到该研究指定最大值的完整表。最大值不得由全局 skill 固定；P_FA_proxy 在缺少匹配 13 道背景验证时仍属非正式指标。
 

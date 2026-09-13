@@ -1,51 +1,28 @@
-# Evidence checks and claim states
+# 证据状态
 
-These are reporting conventions, not an installed gate engine or command-line
-interface. Do not invent gate executables, claim-ledger APIs, promotion ladders,
-or flags such as --allow-conditional. Use existing project machinery if it exists.
+状态是针对一项具体检查或结论的记录，不是物理正确性的替代品。
 
-## Report what was checked
+| 层次 | 例子 | 不能自动推出 |
+|---|---|---|
+| 输出完整性 | 原始 float64、样本与输入匹配 | 物理模型准确 |
+| 数值实现 | DTFT 对照、线性与回归检查 | 直接 CW 正演验证 |
+| 分离指标 | 两峰间距、谷深 | 两峰就是两个界面 |
+| 界面关联 | 几何对照与峰位变化 | 纯界面分量或普适极限 |
+| 最小已测目标 | 有效判据、实际尺寸与已测集合 | 任意形状的全局最小体积 |
 
-Keep independent fields for run/output integrity, processing validation,
-metric result, interface attribution, and the final scoped claim.
+检查可沿用 PASS / PASS_WITH_LIMITATION / BLOCK / STALE / NOT_APPLICABLE。
+结论可沿用 UNVERIFIED / CONDITIONAL / VERIFIED / REJECTED / STALE。
+每项同时记录输入/处理版本、实际检查、证据位置、适用范围和未完成项。
+无条件写入 PASS、脚本退出成功、代数闭合或 F0–F5 标签都不能替代检查。
 
-- PASS: the named check actually ran and satisfied its recorded criterion.
-- PASS_WITH_LIMITATION: evidence supports the named limited statement.
-- BLOCK: the named action or claim cannot proceed because its required check failed.
-- STALE: an upstream change invalidated this evidence for the new use.
-- NOT_APPLICABLE: the check is irrelevant to this task.
+完整仓库的旧 Python CLI 确实实现了 gate/fidelity 机制；这些程序的行为
+以当前代码为准。本参考是科学证据语义，不声称 CLI 已改用这些规则。
+使用前按 [工具入口](tooling.md) 核对，不假设只有文档的安装也带有 CLI。
 
-A scientific NOT_RESOLVED row is a valid experimental result, not a corrupt run.
-A successful script exit or unconditional JSON status is not a physical PASS.
-Do not stop an authorized exploratory simulation solely because a stronger
-physical or hardware claim is unsupported; restrict the claim to the evidence.
+失败只限制相关动作或结论：损坏输出不能定量分析，分离失败应进入结果表，
+不支持工程结论并不禁止已授权的理想仿真研究。不存在泛用的“先升级所有
+保真度等级才可研究”要求。
 
-## Claims
-
-Use UNVERIFIED, CONDITIONAL, VERIFIED, REJECTED or STALE with a specific claim
-and scope. VERIFIED requires demonstrated evidence for that statement, not a
-numerical fidelity label or an attractive figure.
-
-- Implementation consistency: analytic/DTFT checks and regression on raw data.
-- Numerical model behavior: audited solver/model and the relevant diagnostics.
-- Interface association: controlled changes and competing explanations addressed.
-- Physical dimension limit: validated estimator, negative controls, search bounds
-  and relevant numerical convergence/uncertainty.
-- Detection probability: frozen detector, positive/negative populations, noise
-  assumptions, sample size and confidence intervals.
-- Hardware/system performance: the above plus a validated field-to-system link.
-
-Optional F0–F5 labels may describe model abstraction, but a label does not
-automatically license or prohibit a scientific conclusion. Do not demand
-unnecessary hardware calibration for a clearly scoped ideal-simulation study.
-
-## Invalidation
-
-Track environment/build, geometry/materials, source/receiver, raw outputs,
-processing, background method, metrics and conclusions. Revalidate affected
-downstream evidence when an upstream dependency changes. A processing-only change
-usually requires reanalysis, not a new FDTD run; changing physical inputs normally
-requires a new compatible simulation or an explicitly justified existing one.
-
-Preserve frozen results and register a new analysis version. The latest timestamp
-alone does not make an unvalidated picker stronger than earlier evidence.
+上游变更使相关下游证据过期。处理/选峰变更通常只需重分析；物理输入改变
+才通常需要新正演。保存旧结果，新分析另记版本。检测概率与硬件性能的
+额外条件见 [判据与归因](interpretation-and-claims.md)。

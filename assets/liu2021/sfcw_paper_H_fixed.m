@@ -2,15 +2,37 @@ function [Rx, reldrift] = sfcw_paper_H_fixed(h, dt, F, k, steady_cyc, shift_ns)
 % LIU2021 joint simulation demodulator, corrected project study44 algorithm.
 % Source SHA256 and scope: references/d80-project-profile.md in this skill.
 % Calculation body unchanged; this header corrects the original usage example.
-% Caller must audit original dtype, finite data, timing and window validity.
-% h and F must be real finite column vectors; dt and frequencies positive.
+% Caller must audit original dtype, source identity and input/run provenance.
+% Real double row/column h vectors are accepted; outputs are columns.
 % Example:
 %   [Rx, drift] = sfcw_paper_H_fixed(h, dt, F, .25, 3, 100);
 %   prof = ifft(Rx, NFFT); tns = (0:NFFT-1).'/(NFFT*DF)*1e9;
 %   envelope = abs(prof); % complex baseband magnitude, not real Ez
 % No detection, interface attribution or hardware calibration is performed.
 
+if ~isa(h, 'double') || ~isreal(h) || ~isvector(h) || isempty(h) || any(~isfinite(h(:)))
+    error('liu2021:InvalidResponse', 'h must be a finite real double vector; audit original precision before casting.');
+end
+if ~isnumeric(dt) || ~isreal(dt) || ~isscalar(dt) || ~isfinite(dt) || dt <= 0
+    error('liu2021:InvalidParameters', 'dt must be a finite positive scalar.');
+end
+if ~isnumeric(F) || ~isreal(F) || ~isvector(F) || isempty(F) || any(~isfinite(F(:))) || any(F(:) <= 0) || any(F(:) >= .5/dt)
+    error('liu2021:InvalidFrequencies', 'F must contain finite positive frequencies below Nyquist.');
+end
+if ~isnumeric(k) || ~isreal(k) || ~isscalar(k) || ~isfinite(k) || k <= 0 || k >= 1 || ...
+        ~isnumeric(steady_cyc) || ~isreal(steady_cyc) || ~isscalar(steady_cyc) || ~isfinite(steady_cyc) || steady_cyc <= 0 || ...
+        ~isnumeric(shift_ns) || ~isreal(shift_ns) || ~isscalar(shift_ns) || ~isfinite(shift_ns) || shift_ns < 0
+    error('liu2021:InvalidParameters', 'Require 0<k<1, positive cycles, and nonnegative shift_ns.');
+end
+h = h(:); F = double(F(:));
 N = numel(h);
+window_lengths = max(1, round(steady_cyc ./ (F*dt)));
+window_starts = 2*N - floor(window_lengths/2);
+window_shift = round(shift_ns*1e-9/dt);
+if any(~isfinite(window_lengths)) || ~isfinite(window_shift) || ...
+        any(window_starts-window_shift < 1) || any(window_starts+window_lengths-1 > 3*N)
+    error('liu2021:InvalidWindow', 'Steady or drift window is outside the synthesized response.');
+end
 t3 = (0:3*N-1).' * dt;
 L  = 2^nextpow2(4*N);
 Hf = fft(h, L);

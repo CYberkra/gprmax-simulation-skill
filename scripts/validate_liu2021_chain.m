@@ -20,7 +20,25 @@ linearity = max(abs(rs-r1-r2))/max(abs(rs));
 assert(all(isfinite([r1; r2; rs; d1; d2; ds])), 'Nonfinite chain result');
 assert(err < 1e-4, 'DTFT mismatch: check phase, ramp, normalization and steady state');
 assert(linearity < 1e-11, 'Chain lost complex linearity');
+[rrow, ~] = sfcw_paper_H_fixed(h1.', dt, F.', .25, 3, 100);
+assert(isequal(r1, rrow), 'Vector orientation changed the response');
+expect_error(@() sfcw_paper_H_fixed(single(h1), dt, F, .25, 3, 100), 'liu2021:InvalidResponse');
+expect_error(@() sfcw_paper_H_fixed([NaN; 0], dt, F, .25, 3, 100), 'liu2021:InvalidResponse');
+expect_error(@() sfcw_paper_H_fixed(h1, 0, F, .25, 3, 100), 'liu2021:InvalidParameters');
+expect_error(@() sfcw_paper_H_fixed(h1, dt, 1/dt, .25, 3, 100), 'liu2021:InvalidFrequencies');
+expect_error(@() sfcw_paper_H_fixed(h1, dt, F, .25, 3, 1e9), 'liu2021:InvalidWindow');
 fprintf('PASS implementation smoke check: DTFT relative error %.3g, linearity %.3g\n', err, linearity);
+fprintf('PASS row/column equivalence and 5 invalid-input/window checks\n');
 fprintf('Maximum synthetic-window relative drift %.3g (diagnostic only)\n', max([d1; d2; ds]));
 fprintf('Not a direct-CW FDTD test or a resolution/attribution acceptance test.\n');
+end
+
+function expect_error(action, expected_id)
+try
+    action();
+catch failure
+    assert(strcmp(failure.identifier, expected_id), 'Unexpected validation error: %s', failure.identifier);
+    return;
+end
+error('Expected rejection: %s', expected_id);
 end

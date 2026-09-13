@@ -1,5 +1,10 @@
 # Guided setup: wizard and configuration axes
 
+This describes the optional legacy Python wizard, not a mandatory interview for
+the Liu2021 workflow. Its automatic recommendations are implementation heuristics,
+not validated physical guarantees. Reuse already supplied answers and apply the
+current numerical-validity reference when assessing those recommendations.
+
 Use this reference when starting a new gprMax study or changing one of the
 configuration axes. It documents the wizard-driven requirements capture
 (`scripts/wizard.py`) and the configuration-axis recommendations
@@ -51,7 +56,7 @@ always win).
 | Dispersion model | constant / Debye / Lorentz / Drude / measured complex | material research + band |
 | Model noise | none / AWGN (SNR/D) / clutter objects | whether noise/statistical analysis is needed; clutter list from scene research |
 | Target geometry | regular (box/cylinder) / irregular L1–L4 | avoiding coherent artifacts from flat interfaces + fidelity |
-| Numerical precision | auto fp32/fp64 | required dynamic range vs. fp32 floor (≈ −90 dB) |
+| Numerical precision | auto fp32/fp64 | legacy dynamic-range heuristic; audit actual dtype and numerical error, not a universal −90 dB floor |
 | Model dimension | 2d / 2.5d / 3d | project stage + fidelity (see below) |
 
 Grid sizing (dx/dy/dz, PML layers) is derived from the axes above (cells/λ ≥ 10
@@ -61,8 +66,8 @@ decision that the probe only informs. Neither is an axis.
 ### Model dimension and project stage
 
 The model dimension is a first-class axis and must be declared before any run
-(2d = single-cell slice, TM mode; 2.5d = thin-slice 3D, 3–5 cells in the
-invariant direction, keeps 3D physics at lower cost; 3d = full 3D). gprMax's
+(2d = single-cell slice, TM mode; the wizard's 2.5d label = a thin 3-D slice,
+not a validated substitute for a full finite 3-D target; 3d = full 3D). gprMax's
 native 2D is a one-cell-thick slice and forces the source polarisation along
 the invariant direction (TM mode) — record that constraint when 2d is chosen.
 
